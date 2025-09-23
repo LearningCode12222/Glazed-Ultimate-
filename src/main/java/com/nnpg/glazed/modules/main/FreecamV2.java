@@ -9,7 +9,7 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.OtherClientPlayerEntity;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.Entity;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.math.Vec3d;
 
@@ -59,7 +59,7 @@ public class FreecamV2 extends Module {
         dummy = new OtherClientPlayerEntity(mc.world, mc.player.getGameProfile());
         dummy.copyFrom(mc.player);
         dummy.headYaw = mc.player.headYaw;
-        mc.world.addEntity(dummy);
+        mc.world.addEntity(dummy.getId(), dummy);
 
         // Save camera state
         cameraPos = mc.player.getPos();
@@ -70,7 +70,7 @@ public class FreecamV2 extends Module {
     @Override
     public void onDeactivate() {
         if (mc.world != null && dummy != null) {
-            mc.world.removeEntity(dummy.getId());
+            mc.world.removeEntity(dummy.getId(), Entity.RemovalReason.DISCARDED);
         }
         dummy = null;
 
@@ -125,7 +125,7 @@ public class FreecamV2 extends Module {
                 new PlayerMoveC2SPacket.Full(
                     cameraPos.x, cameraPos.y, cameraPos.z,
                     cameraYaw, cameraPitch,
-                    mc.player.isOnGround(), true
+                    mc.player.isOnGround(), false // 7th arg matches your mappings
                 )
             );
         }
