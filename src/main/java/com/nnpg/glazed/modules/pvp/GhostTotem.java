@@ -28,7 +28,7 @@ public class GhostTotem extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (!showHud.get()) return;
+        if (!showHud.get() || mc.player == null) return;
 
         int x = 5;
         int y = 50;
@@ -41,8 +41,8 @@ public class GhostTotem extends Module {
             }
         }
 
-        // ✅ drawWithShadow no longer takes MatrixStack
-        mc.textRenderer.drawWithShadow(event.matrices, "Ghost Totem", x, y, 0xFFFFFF);
-        mc.textRenderer.drawWithShadow(event.matrices, "Totems: " + invTotems, x, y + 10, 0xFFCC00);
+        // 🚀 In newer Meteor, drawWithShadow uses: drawWithShadow(DrawContext, String, x, y, color)
+        event.drawContext.drawTextWithShadow(mc.textRenderer, "Ghost Totem", x, y, 0xFFFFFF);
+        event.drawContext.drawTextWithShadow(mc.textRenderer, "Totems: " + invTotems, x, y + 10, 0xFFCC00);
     }
 }
