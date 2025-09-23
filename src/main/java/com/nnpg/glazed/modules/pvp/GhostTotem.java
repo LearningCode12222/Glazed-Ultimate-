@@ -1,54 +1,52 @@
 package com.nnpg.glazed.modules.pvp;
 
-import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.Identifier;
-import net.minecraft.client.render.item.HeldItemRenderer;
+import com.nnpg.glazed.GlazedAddon;
 
+/**
+ * GhostTotem - simple HUD element showing totem count (fixes drawWithShadow/matrices issues).
+ * Note: This module only displays inventory counts on-screen. If you need the 'ghost-hold' effect
+ * (rendering a totem in hand while holding a weapon) that is more invasive and needs packet / rendering work.
+ */
 public class GhostTotem extends Module {
     private final SettingGroup sg = settings.getDefaultGroup();
 
-    private final Setting<Boolean> onlyWhenSword = sg.add(new BoolSetting.Builder()
-        .name("only-when-sword")
-        .description("Only show the ghost totem when you're holding a sword in main hand.")
-        .defaultValue(true).build()
+    private final Setting<Boolean> showHud = sg.add(new BoolSetting.Builder()
+        .name("show-hud")
+        .description("Show the ghost totem HUD with inventory count.")
+        .defaultValue(true)
+        .build()
     );
 
     public GhostTotem() {
-        super(GlazedAddon.pvp, "ghost-totem", "Client-only HUD: shows a totem icon/text while you actually hold a sword.");
+        super(GlazedAddon.pvp, "ghost-totem", "Show a small HUD with your totem count (ghost visual features require more).");
     }
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (mc.player == null) return;
+        if (!showHud.get() || mc.player == null) return;
 
-        ItemStack main = mc.player.getMainHandStack();
-        boolean isSword = main.getItem() == Items.NETHERITE_SWORD ||
-                          main.getItem() == Items.DIAMOND_SWORD ||
-                          main.getItem() == Items.IRON_SWORD ||
-                          main.getItem() == Items.STONE_SWORD ||
-                          main.getItem() == Items.GOLDEN_SWORD ||
-                          main.getItem() == Items.WOODEN_SWORD;
+        int x = 6;
+        int y = 6;
 
-        if (onlyWhenSword.get() && !isSword) return;
-
-        MatrixStack matrices = event.matrices;
-        int x = mc.getWindow().getScaledWidth() / 2 + 10;
-        int y = mc.getWindow().getScaledHeight() - 30;
-
-        // Draw a small text + count of totems you actually have in inventory (client-side)
-        mc.textRenderer.drawWithShadow(matrices, "Ghost Totem", x, y - 12, 0xFFFFFF);
         int invTotems = 0;
-        for (int i = 0; i < mc.player.getInventory().size(); i++) {
-            ItemStack s = mc.player.getInventory().getStack(i);
+        // Count totems in main inventory + offhand/hotbar
+        for (ItemStack s : mc.player.getInventory().main) {
             if (s.getItem() == Items.TOTEM_OF_UNDYING) invTotems += s.getCount();
         }
-        mc.textRenderer.drawWithShadow(matrices, "Totems: " + invTotems, x, y, 0xFFCC00);
+        if (mc.player.getOffHandStack().getItem() == Items.TOTEM_OF_UNDYING) {
+            invTotems += mc.player.getOffHandStack().getCount();
+        }
+
+        // Use the drawWithShadow signature without MatrixStack (matches your environment)
+        mc.textRenderer.drawWithShadow("Ghost Totem", x, y, 0xFFFFFF);
+        mc.textRenderer.drawWithShadow("Totems: " + invTotems, x, y + 10, 0xFFCC00);
     }
 }
