@@ -36,7 +36,7 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new AntiTrap()); //done
         Modules.get().add(new CoordSnapper()); //done
         Modules.get().add(new AutoFirework()); //done
-        Modules.get().add(new ElytraSwap()); //done
+        Modules.get().add(new TotemSwipe()); //done
         Modules.get().add(new PlayerDetection()); //done
         Modules.get().add(new AHSniper()); //done
         Modules.get().add(new RTPer()); //done
