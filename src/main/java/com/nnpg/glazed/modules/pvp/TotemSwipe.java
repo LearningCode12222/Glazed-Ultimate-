@@ -3,116 +3,90 @@ package com.nnpg.glazed.modules.pvp;
 import com.nnpg.glazed.GlazedAddon;
 import com.nnpg.glazed.VersionUtil;
 import meteordevelopment.meteorclient.events.entity.player.AttackEntityEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.item.ItemStack;
+import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.util.Hand;
 
+/**
+ * TotemSwipe - packet-only hotbar swap to nearest sword, attack, then restore.
+ * Server sees the sword attack, client never visually switches.
+ */
 public class TotemSwipe extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Boolean> onlyWithTotem = sgGeneral.add(new BoolSetting.Builder()
         .name("only-with-totem")
-        .description("Only triggers when holding a totem in hand.")
+        .description("Only triggers when holding a totem in either hand.")
         .defaultValue(true)
         .build()
     );
 
-    private final Setting<Integer> swordSlot = sgGeneral.add(new IntSetting.Builder()
-        .name("sword-slot")
-        .description("Preferred hotbar slot (0-8) to use as sword. If that slot doesn't contain a sword, module will auto-find the first sword in hotbar.")
-        .defaultValue(0)
-        .min(0).max(8)
-        .build()
-    );
-
-    // internal state for the staged swap/attack/swap-back
-    private int stage = 0; // 0 = idle, 1 = swapped -> attack now, 2 = swap back next tick
-    private int prevSlot = -1;
-    private int targetSwordSlot = -1;
-    private Entity targetEntity = null;
-
     public TotemSwipe() {
-        super(GlazedAddon.pvp, "totem-swipe", "Quickly swap to a sword to make an attack look like it came from a totem.");
+        super(GlazedAddon.pvp, "totem-swipe", "Packet-swap to nearest sword, attack, then swap back so it looks like the totem did the damage.");
     }
 
     @EventHandler
-    private void onAttackEntity(AttackEntityEvent event) {
-        if (mc.player == null || mc.interactionManager == null) return;
+    private void onAttack(AttackEntityEvent event) {
+        if (mc.player == null || mc.interactionManager == null || mc.getNetworkHandler() == null) return;
 
-        // If requested, only do this when holding a totem in either hand
+        // Require totem in either hand if configured
         if (onlyWithTotem.get()) {
             ItemStack main = mc.player.getMainHandStack();
             ItemStack off = mc.player.getOffHandStack();
             if (main.getItem() != Items.TOTEM_OF_UNDYING && off.getItem() != Items.TOTEM_OF_UNDYING) return;
         }
 
-        // Determine sword slot (preferred first, fallback to auto-find)
-        int preferred = swordSlot.get();
-        int found = isSwordAt(preferred) ? preferred : findSwordInHotbar();
-        if (found == -1) return; // no sword found -> do nothing
+        Entity target = event.entity;
+        if (target == null) return;
 
-        // Save state for tick handler
-        prevSlot = VersionUtil.getSelectedSlot(mc.player);
-        targetSwordSlot = found;
-        targetEntity = event.entity;
-        stage = 1; // start the swap/attack flow on next tick
+        int clientSlot = VersionUtil.getSelectedSlot(mc.player);
+        int swordSlot = findClosestSwordSlot(clientSlot);
+        if (swordSlot == -1) return; // no sword found
+
+        // Send packet to server telling it we selected the sword slot (client UI not changed)
+        try {
+            mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(swordSlot));
+        } catch (Exception ignored) {}
+
+        // Attack (interaction manager will send AttackEntity packet using the server's selected slot)
+        try {
+            mc.interactionManager.attackEntity(mc.player, target);
+            // local swing (also not visually changing selected slot)
+            mc.player.swingHand(Hand.MAIN_HAND);
+        } catch (Exception ignored) {}
+
+        // Restore server-side selected slot to original
+        try {
+            mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(clientSlot));
+        } catch (Exception ignored) {}
     }
 
-    @EventHandler
-    private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || mc.interactionManager == null) return;
+    private int findClosestSwordSlot(int currentSlot) {
+        if (mc.player == null) return -1;
 
-        switch (stage) {
-            case 0 -> {
-                // idle
-            }
-            case 1 -> {
-                // switch to sword slot
-                VersionUtil.setSelectedSlot(mc.player, targetSwordSlot);
+        int bestSlot = -1;
+        int bestDist = Integer.MAX_VALUE;
 
-                // Perform attack using the stored entity (guard null)
-                if (targetEntity != null && targetEntity.isAlive()) {
-                    try {
-                        mc.interactionManager.attackEntity(mc.player, targetEntity);
-                        mc.player.swingHand(Hand.MAIN_HAND);
-                    } catch (Exception ignore) {}
-                }
-
-                // Next tick we'll swap back
-                stage = 2;
-            }
-            case 2 -> {
-                // switch back to previous slot
-                VersionUtil.setSelectedSlot(mc.player, prevSlot);
-
-                // reset state
-                prevSlot = -1;
-                targetSwordSlot = -1;
-                targetEntity = null;
-                stage = 0;
-            }
-        }
-    }
-
-    private int findSwordInHotbar() {
         for (int i = 0; i < 9; i++) {
-            Item item = mc.player.getInventory().getStack(i).getItem();
-            if (isSword(item)) return i;
+            Item it = mc.player.getInventory().getStack(i).getItem();
+            if (isSword(it)) {
+                int dist = Math.abs(currentSlot - i);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestSlot = i;
+                }
+            }
         }
-        return -1;
-    }
 
-    private boolean isSwordAt(int slot) {
-        if (mc.player == null) return false;
-        if (slot < 0 || slot > 8) return false;
-        Item item = mc.player.getInventory().getStack(slot).getItem();
-        return isSword(item);
+        return bestSlot;
     }
 
     private boolean isSword(Item item) {
