@@ -1,89 +1,54 @@
 package com.nnpg.glazed.modules.pvp;
 
 import com.nnpg.glazed.GlazedAddon;
-import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
+import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.Identifier;
+import net.minecraft.client.render.item.HeldItemRenderer;
 
-/**
- * Ghost Totem:
- * Visually shows that you're holding a totem while actually holding a sword or crystal.
- */
 public class GhostTotem extends Module {
-    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sg = settings.getDefaultGroup();
 
-    private final Setting<Boolean> preferSword = sgGeneral.add(new BoolSetting.Builder()
-        .name("prefer-sword")
-        .description("Prefer switching to a sword instead of crystal when faking totem.")
-        .defaultValue(true)
-        .build()
+    private final Setting<Boolean> onlyWhenSword = sg.add(new BoolSetting.Builder()
+        .name("only-when-sword")
+        .description("Only show the ghost totem when you're holding a sword in main hand.")
+        .defaultValue(true).build()
     );
 
-    private int fakeSlot = -1;
-    private int realSlot = -1;
-
     public GhostTotem() {
-        super(GlazedAddon.pvp, "ghost-totem", "Shows a totem in hand while actually using sword or crystal.");
-    }
-
-    @Override
-    public void onActivate() {
-        // Nothing special, will be handled in tick.
-        fakeSlot = -1;
-        realSlot = -1;
-    }
-
-    @Override
-    public void onDeactivate() {
-        // Reset back to player’s original slot
-        if (realSlot != -1) {
-            mc.player.getInventory().selectedSlot = realSlot;
-            mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(realSlot));
-        }
-        fakeSlot = -1;
-        realSlot = -1;
+        super(GlazedAddon.pvp, "ghost-totem", "Client-only HUD: shows a totem icon/text while you actually hold a sword.");
     }
 
     @EventHandler
-    private void onTick(TickEvent.Pre event) {
+    private void onRender2D(Render2DEvent event) {
         if (mc.player == null) return;
 
-        // Find totem slot
-        int totemSlot = findItemSlot(Items.TOTEM_OF_UNDYING);
-        // Find sword/crystal slot
-        int swordSlot = findItemSlot(Items.NETHERITE_SWORD);
-        int crystalSlot = findItemSlot(Items.END_CRYSTAL);
+        ItemStack main = mc.player.getMainHandStack();
+        boolean isSword = main.getItem() == Items.NETHERITE_SWORD ||
+                          main.getItem() == Items.DIAMOND_SWORD ||
+                          main.getItem() == Items.IRON_SWORD ||
+                          main.getItem() == Items.STONE_SWORD ||
+                          main.getItem() == Items.GOLDEN_SWORD ||
+                          main.getItem() == Items.WOODEN_SWORD;
 
-        if (totemSlot == -1) return; // no totem = nothing to spoof
+        if (onlyWhenSword.get() && !isSword) return;
 
-        // Pick real slot
-        realSlot = preferSword.get() && swordSlot != -1 ? swordSlot : crystalSlot;
+        MatrixStack matrices = event.matrices;
+        int x = mc.getWindow().getScaledWidth() / 2 + 10;
+        int y = mc.getWindow().getScaledHeight() - 30;
 
-        if (realSlot == -1) return; // no weapon found
-
-        // Fake being on totem slot (visually)
-        if (mc.player.getInventory().selectedSlot != totemSlot) {
-            fakeSlot = totemSlot;
-            mc.player.getInventory().selectedSlot = fakeSlot;
-            mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(fakeSlot));
+        // Draw a small text + count of totems you actually have in inventory (client-side)
+        mc.textRenderer.drawWithShadow(matrices, "Ghost Totem", x, y - 12, 0xFFFFFF);
+        int invTotems = 0;
+        for (int i = 0; i < mc.player.getInventory().size(); i++) {
+            ItemStack s = mc.player.getInventory().getStack(i);
+            if (s.getItem() == Items.TOTEM_OF_UNDYING) invTotems += s.getCount();
         }
-
-        // But internally, keep real slot recorded so attacks work
-        // We switch to real slot only right before an attack (see AttackEntityEvent hook)
-    }
-
-    private int findItemSlot(net.minecraft.item.Item item) {
-        for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack.getItem() == item) return i;
-        }
-        return -1;
+        mc.textRenderer.drawWithShadow(matrices, "Totems: " + invTotems, x, y, 0xFFCC00);
     }
 }
