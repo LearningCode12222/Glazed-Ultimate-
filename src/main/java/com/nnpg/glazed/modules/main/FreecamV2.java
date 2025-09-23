@@ -1,5 +1,7 @@
 package com.nnpg.glazed.modules.main;
 
+import com.mojang.authlib.GameProfile;
+import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
@@ -7,78 +9,91 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-
 import net.minecraft.client.network.OtherClientPlayerEntity;
-import net.minecraft.entity.player.PlayerEntity;
-
-import com.nnpg.glazed.GlazedAddon;
+import net.minecraft.util.math.Vec3d;
 
 public class FreecamV2 extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Double> speed = sgGeneral.add(new DoubleSetting.Builder()
         .name("speed")
-        .description("Movement speed while in freecam.")
+        .description("Freecam flying speed.")
         .defaultValue(1.0)
         .min(0.1)
         .sliderMax(5.0)
         .build()
     );
 
-    public enum FreecamMode {
-        Basic,
-        XRay
-    }
-
-    private final Setting<FreecamMode> mode = sgGeneral.add(new EnumSetting.Builder<FreecamMode>()
+    private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
-        .description("Freecam mode to use.")
-        .defaultValue(FreecamMode.Basic)
+        .description("How Freecam renders.")
+        .defaultValue(Mode.Basic)
         .build()
     );
 
     private OtherClientPlayerEntity dummy;
+    private Vec3d oldPos;
 
     public FreecamV2() {
-        // use a valid category from GlazedAddon (main/pvp/render/etc.)
-        super(GlazedAddon.main, "freecam-v2", "Move your camera outside your body with extra options.");
+        super(GlazedAddon.CATEGORY, "freecam-v2", "Move your camera outside your body with extra options.");
     }
 
     @Override
     public void onActivate() {
         if (mc.player == null || mc.world == null) return;
 
-        // create a dummy entity to represent your body
-        dummy = new OtherClientPlayerEntity(mc.world, mc.getSession().getProfile());
-        dummy.copyPositionAndRotation(mc.player);
-        dummy.setHeadYaw(mc.player.getHeadYaw());
+        // save old position
+        oldPos = mc.player.getPos();
 
-        // ✅ Corrected: addEntity only takes one arg
+        // create dummy at player location
+        GameProfile profile = new GameProfile(mc.player.getUuid(), mc.getSession().getUsername());
+        dummy = new OtherClientPlayerEntity(mc.world, profile);
+        dummy.copyFrom(mc.player);
         mc.world.addEntity(dummy);
+
+        // adjust gamma if using xray mode
+        if (mode.get() == Mode.XRay) {
+            mc.options.getGamma().setValue(15.0); // fullbright
+        }
     }
 
     @Override
     public void onDeactivate() {
-        if (mc.world != null && dummy != null) {
-            // ✅ Corrected: discard entity instead of using RemovalReason
+        if (mc.player == null || mc.world == null) return;
+
+        // restore player position
+        if (oldPos != null) mc.player.updatePosition(oldPos.x, oldPos.y, oldPos.z);
+
+        // remove dummy
+        if (dummy != null) {
             dummy.discard();
             dummy = null;
+        }
+
+        // reset gamma
+        if (mode.get() == Mode.XRay) {
+            mc.options.getGamma().setValue(1.0);
         }
     }
 
     @EventHandler
-    private void onTick(TickEvent.Pre event) {
+    private void onTick(TickEvent.Post event) {
         if (mc.player == null) return;
 
-        // Apply speed setting to movement
-        mc.player.getAbilities().flying = true;
-        mc.player.getAbilities().setFlySpeed(speed.get().floatValue() / 10.0f);
+        // freecam movement
+        double spd = speed.get();
+        Vec3d forward = Vec3d.fromPolar(0, mc.player.getYaw()).normalize().multiply(spd);
+        if (mc.options.forwardKey.isPressed()) mc.player.setVelocity(forward);
+        if (mc.options.backKey.isPressed()) mc.player.setVelocity(forward.negate());
+        if (mc.options.jumpKey.isPressed()) mc.player.addVelocity(0, spd, 0);
+        if (mc.options.sneakKey.isPressed()) mc.player.addVelocity(0, -spd, 0);
 
-        // Mode handling
-        if (mode.get() == FreecamMode.XRay) {
-            mc.options.gamma = 15.0; // fullbright/xray feel
-        } else {
-            mc.options.gamma = 1.0; // reset gamma
-        }
+        // cancel collisions
+        mc.player.noClip = true;
+    }
+
+    public enum Mode {
+        Basic,
+        XRay
     }
 }
