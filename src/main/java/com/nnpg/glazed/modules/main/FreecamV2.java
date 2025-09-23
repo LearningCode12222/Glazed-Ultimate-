@@ -59,7 +59,7 @@ public class FreecamV2 extends Module {
         dummy = new OtherClientPlayerEntity(mc.world, mc.player.getGameProfile());
         dummy.copyFrom(mc.player);
         dummy.headYaw = mc.player.headYaw;
-        mc.world.addEntity(dummy.getId(), dummy);
+        mc.world.addEntity(dummy); // ✅ fixed: only pass the entity
 
         // Save camera state
         cameraPos = mc.player.getPos();
@@ -70,7 +70,7 @@ public class FreecamV2 extends Module {
     @Override
     public void onDeactivate() {
         if (mc.world != null && dummy != null) {
-            mc.world.removeEntity(dummy.getId(), Entity.RemovalReason.DISCARDED);
+            mc.world.removeEntity(dummy.getId(), Entity.RemovalReason.DISCARDED); // ✅ proper removal
         }
         dummy = null;
 
@@ -125,7 +125,7 @@ public class FreecamV2 extends Module {
                 new PlayerMoveC2SPacket.Full(
                     cameraPos.x, cameraPos.y, cameraPos.z,
                     cameraYaw, cameraPitch,
-                    mc.player.isOnGround(), false // 7th arg matches your mappings
+                    mc.player.isOnGround(), true
                 )
             );
         }
