@@ -1,23 +1,20 @@
 package com.nnpg.glazed.modules.main;
 
-import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Categories;
+import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.OtherClientPlayerEntity;
-import net.minecraft.client.option.SimpleOption;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.math.Vec3d;
 
 /**
  * Freecam V2 for Glazed-Ultimate.
- * Lets you move your camera outside the body AND interact (mine, place) from camera.
  */
 public class FreecamV2 extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -58,11 +55,11 @@ public class FreecamV2 extends Module {
             return;
         }
 
-        // Spawn dummy to hold your place
+        // Dummy player to hold your spot
         dummy = new OtherClientPlayerEntity(mc.world, mc.player.getGameProfile());
         dummy.copyFrom(mc.player);
         dummy.headYaw = mc.player.headYaw;
-        mc.world.addEntity(dummy.getId(), dummy);
+        mc.world.addEntity(dummy);
 
         // Save camera state
         cameraPos = mc.player.getPos();
@@ -73,11 +70,11 @@ public class FreecamV2 extends Module {
     @Override
     public void onDeactivate() {
         if (mc.world != null && dummy != null) {
-            mc.world.removeEntity(dummy.getId(), EntityRemovalReason.DISCARDED);
+            mc.world.removeEntity(dummy.getId());
         }
         dummy = null;
 
-        // Reset camera back to player
+        // Reset camera back
         if (mc.player != null) {
             mc.player.setYaw(cameraYaw);
             mc.player.setPitch(cameraPitch);
@@ -128,7 +125,7 @@ public class FreecamV2 extends Module {
                 new PlayerMoveC2SPacket.Full(
                     cameraPos.x, cameraPos.y, cameraPos.z,
                     cameraYaw, cameraPitch,
-                    mc.player.isOnGround()
+                    mc.player.isOnGround(), true
                 )
             );
         }
