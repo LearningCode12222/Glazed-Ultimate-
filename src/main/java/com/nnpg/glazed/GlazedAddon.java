@@ -89,6 +89,9 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new Itemswap());
         Modules.get().add(new AutoTrident());
         Modules.get().add(new AutoTreeFarmer());
+        Modules.get().add(new GhostTotem());
+        Modules.get().add(new PopCounter());
+        Modules.get().add(new TotemPopAlert());
 
 
 
