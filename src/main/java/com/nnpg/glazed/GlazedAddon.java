@@ -47,6 +47,7 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new AutoShulkerOrder()); // done
         Modules.get().add(new AutoOrder()); //done
         Modules.get().add(new HideScoreboard());
+        Modules.get().add(new FreecamV2());
         Modules.get().add(new AutoInvTotem());
         Modules.get().add(new LegitCrystalMacro());
         Modules.get().add(new CrystalMacro());
