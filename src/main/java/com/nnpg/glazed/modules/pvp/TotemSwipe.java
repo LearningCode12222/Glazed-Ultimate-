@@ -1,161 +1,135 @@
-package com.wazify.pyra.modules.pvp;
+package com.nnpg.glazed.modules.pvp;
 
 import meteordevelopment.meteorclient.events.entity.player.AttackEntityEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 
+import net.minecraft.entity.Entity;
 import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.util.Hand;
 
-import com.wazify.pyra.PyraAddon;
+import com.nnpg.glazed.GlazedAddon;
 
+/**
+ * TotemSwipe Module
+ *
+ * This makes it look like you are attacking with a totem,
+ * but actually swaps to a sword or axe for the damage
+ * and then swaps back instantly.
+ */
 public class TotemSwipe extends Module {
+    // ------------------------------
+    // Settings
+    // ------------------------------
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    // Only trigger when holding totem
+    // Trigger only when holding a totem
     private final Setting<Boolean> onlyWithTotem = sgGeneral.add(new BoolSetting.Builder()
         .name("only-with-totem")
-        .description("Only swipes when holding a totem in main hand.")
+        .description("Only activates if you're holding a totem.")
         .defaultValue(true)
         .build()
     );
 
-    // Weapon mode: Sword, Axe, Auto
+    // Weapon type to use (sword or axe)
+    public enum WeaponMode {
+        Sword,
+        Axe
+    }
+
     private final Setting<WeaponMode> weaponMode = sgGeneral.add(new EnumSetting.Builder<WeaponMode>()
         .name("weapon-mode")
-        .description("Choose which weapon to use when swiping.")
+        .description("Which weapon to use for the hidden attack.")
         .defaultValue(WeaponMode.Sword)
         .build()
     );
 
-    // Hotbar slot (if not auto mode)
-    private final Setting<Integer> weaponSlot = sgGeneral.add(new IntSetting.Builder()
-        .name("weapon-slot")
-        .description("Hotbar slot (0-8) of your weapon (ignored in Auto mode).")
-        .defaultValue(0)
-        .range(0, 8)
+    // Whether to swing animation is forced
+    private final Setting<Boolean> doSwing = sgGeneral.add(new BoolSetting.Builder()
+        .name("swing-animation")
+        .description("Plays the hand swing animation when the attack is triggered.")
+        .defaultValue(true)
         .build()
     );
 
-    // Attack delay before swapping back
-    private final Setting<Integer> attackDelay = sgGeneral.add(new IntSetting.Builder()
-        .name("attack-delay")
-        .description("Delay (in ticks) before swapping back to totem.")
-        .defaultValue(1)
-        .range(0, 10)
-        .sliderRange(0, 10)
-        .build()
-    );
-
-    // Swing style
-    private final Setting<SwingStyle> swingStyle = sgGeneral.add(new EnumSetting.Builder<SwingStyle>()
-        .name("swing-style")
-        .description("How the swing animation should be played.")
-        .defaultValue(SwingStyle.MainHand)
-        .build()
-    );
-
-    // Debug logs
-    private final Setting<Boolean> debugLogs = sgGeneral.add(new BoolSetting.Builder()
-        .name("debug-logs")
-        .description("Print debug messages in chat for testing.")
-        .defaultValue(false)
-        .build()
-    );
-
+    // ------------------------------
+    // Constructor
+    // ------------------------------
     public TotemSwipe() {
-        super(PyraAddon.pvp, "totem-swipe", "Attack with sword/axe while holding a totem (visual trick).");
+        super(GlazedAddon.pvp, "totem-swipe", "Attacks with a sword or axe while showing a totem.");
     }
 
+    // ------------------------------
+    // Event Listener
+    // ------------------------------
     @EventHandler
     private void onAttackEntity(AttackEntityEvent event) {
-        if (mc.player == null || mc.interactionManager == null) return;
+        if (mc.player == null || mc.world == null) return;
 
-        ItemStack mainHand = mc.player.getMainHandStack();
-
-        // Check totem condition
-        if (onlyWithTotem.get() && mainHand.getItem() != Items.TOTEM_OF_UNDYING) {
-            if (debugLogs.get()) info("Cancelled: Not holding totem.");
+        // Check if we are holding a totem when required
+        if (onlyWithTotem.get() && mc.player.getMainHandStack().getItem() != Items.TOTEM_OF_UNDYING) {
             return;
         }
 
+        // Save the player’s current hotbar slot
         int originalSlot = mc.player.getInventory().selectedSlot;
-        int targetSlot = resolveWeaponSlot();
 
-        // Safety check
-        if (targetSlot == -1) {
-            if (debugLogs.get()) info("No valid weapon found.");
+        // Try to find the closest valid weapon in hotbar
+        int weaponSlot = findWeaponSlot();
+
+        if (weaponSlot == -1) {
+            // No valid weapon found, cancel
             return;
         }
 
-        // Switch to weapon
-        switchToSlot(targetSlot);
+        // Swap to the weapon
+        mc.player.getInventory().selectedSlot = weaponSlot;
 
         // Perform the attack
-        mc.interactionManager.attackEntity(mc.player, event.entity);
+        Entity target = event.entity;
+        if (target != null) {
+            mc.interactionManager.attackEntity(mc.player, target);
 
-        // Swing animation
-        playSwing();
-
-        // Optionally delay before switching back
-        if (attackDelay.get() > 0) {
-            mc.execute(() -> mc.player.getInventory().selectedSlot = originalSlot, attackDelay.get());
-            mc.execute(() -> mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(originalSlot)), attackDelay.get());
-        } else {
-            // Instant revert
-            switchToSlot(originalSlot);
-        }
-
-        if (debugLogs.get()) {
-            info("Swiped entity with slot " + targetSlot + " (" + mc.player.getInventory().getStack(targetSlot).getItem().getName().getString() + ")");
-        }
-    }
-
-    // Resolves which slot to use based on mode
-    private int resolveWeaponSlot() {
-        if (weaponMode.get() == WeaponMode.Auto) {
-            for (int i = 0; i < 9; i++) {
-                Item item = mc.player.getInventory().getStack(i).getItem();
-                if (item == Items.NETHERITE_SWORD || item == Items.DIAMOND_SWORD || 
-                    item == Items.IRON_SWORD || item == Items.NETHERITE_AXE || 
-                    item == Items.DIAMOND_AXE || item == Items.IRON_AXE) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-        return weaponSlot.get();
-    }
-
-    // Handles slot switching safely
-    private void switchToSlot(int slot) {
-        mc.player.getInventory().selectedSlot = slot;
-        mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(slot));
-    }
-
-    // Handles swing animations
-    private void playSwing() {
-        switch (swingStyle.get()) {
-            case MainHand -> mc.player.swingHand(Hand.MAIN_HAND);
-            case OffHand -> mc.player.swingHand(Hand.OFF_HAND);
-            case Both -> {
+            if (doSwing.get()) {
                 mc.player.swingHand(Hand.MAIN_HAND);
-                mc.player.swingHand(Hand.OFF_HAND);
             }
         }
+
+        // Swap back instantly to the original slot (totem)
+        mc.player.getInventory().selectedSlot = originalSlot;
     }
 
-    // Weapon modes
-    public enum WeaponMode {
-        Sword, Axe, Auto
-    }
+    // ------------------------------
+    // Helper Methods
+    // ------------------------------
 
-    // Swing styles
-    public enum SwingStyle {
-        MainHand, OffHand, Both
+    /**
+     * Finds the closest hotbar slot that matches the chosen weapon mode.
+     * @return the slot index, or -1 if not found
+     */
+    private int findWeaponSlot() {
+        Item targetWeapon;
+
+        if (weaponMode.get() == WeaponMode.Sword) {
+            targetWeapon = Items.NETHERITE_SWORD;
+        } else {
+            targetWeapon = Items.NETHERITE_AXE;
+        }
+
+        // Look through hotbar slots 0-8
+        for (int i = 0; i < 9; i++) {
+            Item slotItem = mc.player.getInventory().getStack(i).getItem();
+            if (slotItem == targetWeapon) {
+                return i;
+            }
+        }
+
+        // Nothing found
+        return -1;
     }
 }
