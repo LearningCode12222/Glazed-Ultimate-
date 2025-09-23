@@ -1,150 +1,161 @@
-package com.nnpg.glazed.modules.pvp;
+package com.wazify.pyra.modules.pvp;
 
-import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.entity.player.AttackEntityEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
+
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.util.Hand;
 
+import com.wazify.pyra.PyraAddon;
+
 public class TotemSwipe extends Module {
-    private final SettingGroup sg = settings.getDefaultGroup();
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    public enum WeaponType { Sword, Axe }
-    public enum Animation { Swing, Crit, None }
-
-    private final Setting<WeaponType> weaponType = sg.add(new EnumSetting.Builder<WeaponType>()
-        .name("weapon-type")
-        .description("Which weapon to fake the attack with.")
-        .defaultValue(WeaponType.Sword)
+    // Only trigger when holding totem
+    private final Setting<Boolean> onlyWithTotem = sgGeneral.add(new BoolSetting.Builder()
+        .name("only-with-totem")
+        .description("Only swipes when holding a totem in main hand.")
+        .defaultValue(true)
         .build()
     );
 
-    private final Setting<Animation> animation = sg.add(new EnumSetting.Builder<Animation>()
-        .name("animation")
-        .description("What animation to play when attacking.")
-        .defaultValue(Animation.Swing)
+    // Weapon mode: Sword, Axe, Auto
+    private final Setting<WeaponMode> weaponMode = sgGeneral.add(new EnumSetting.Builder<WeaponMode>()
+        .name("weapon-mode")
+        .description("Choose which weapon to use when swiping.")
+        .defaultValue(WeaponMode.Sword)
         .build()
     );
 
-    private final Setting<Integer> switchBackTicks = sg.add(new IntSetting.Builder()
-        .name("switch-back-ticks")
-        .description("Ticks to wait before switching back (0 = instant).")
+    // Hotbar slot (if not auto mode)
+    private final Setting<Integer> weaponSlot = sgGeneral.add(new IntSetting.Builder()
+        .name("weapon-slot")
+        .description("Hotbar slot (0-8) of your weapon (ignored in Auto mode).")
         .defaultValue(0)
-        .min(0).max(5)
+        .range(0, 8)
         .build()
     );
 
-    private int originalSlot = -1;
-    private int ticksRemaining = 0;
-    private boolean busy = false;
+    // Attack delay before swapping back
+    private final Setting<Integer> attackDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("attack-delay")
+        .description("Delay (in ticks) before swapping back to totem.")
+        .defaultValue(1)
+        .range(0, 10)
+        .sliderRange(0, 10)
+        .build()
+    );
+
+    // Swing style
+    private final Setting<SwingStyle> swingStyle = sgGeneral.add(new EnumSetting.Builder<SwingStyle>()
+        .name("swing-style")
+        .description("How the swing animation should be played.")
+        .defaultValue(SwingStyle.MainHand)
+        .build()
+    );
+
+    // Debug logs
+    private final Setting<Boolean> debugLogs = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug-logs")
+        .description("Print debug messages in chat for testing.")
+        .defaultValue(false)
+        .build()
+    );
 
     public TotemSwipe() {
-        super(GlazedAddon.pvp, "totem-swipe", "Quickly swap to a weapon, attack, then swap back so it looks like the totem hit.");
+        super(PyraAddon.pvp, "totem-swipe", "Attack with sword/axe while holding a totem (visual trick).");
     }
 
     @EventHandler
-    private void onAttack(AttackEntityEvent event) {
-        if (mc.player == null || mc.interactionManager == null || busy) return;
+    private void onAttackEntity(AttackEntityEvent event) {
+        if (mc.player == null || mc.interactionManager == null) return;
 
-        int weaponSlot = findWeaponSlot(weaponType.get());
-        if (weaponSlot == -1) return;
+        ItemStack mainHand = mc.player.getMainHandStack();
 
-        originalSlot = mc.player.getInventory().selectedSlot;
-
-        busy = true;
-
-        // Switch to weapon
-        mc.player.getInventory().selectedSlot = weaponSlot;
-        if (mc.player.networkHandler != null) {
-            mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(weaponSlot));
-        }
-
-        // Attack
-        try {
-            mc.interactionManager.attackEntity(mc.player, event.entity);
-            playAnimation();
-        } catch (Exception e) {
-            restoreImmediate();
+        // Check totem condition
+        if (onlyWithTotem.get() && mainHand.getItem() != Items.TOTEM_OF_UNDYING) {
+            if (debugLogs.get()) info("Cancelled: Not holding totem.");
             return;
         }
 
-        // Restore
-        ticksRemaining = Math.max(0, switchBackTicks.get());
-        if (ticksRemaining == 0) restoreImmediate();
-    }
+        int originalSlot = mc.player.getInventory().selectedSlot;
+        int targetSlot = resolveWeaponSlot();
 
-    @EventHandler
-    private void onTick(TickEvent.Post event) {
-        if (!busy) return;
+        // Safety check
+        if (targetSlot == -1) {
+            if (debugLogs.get()) info("No valid weapon found.");
+            return;
+        }
 
-        if (ticksRemaining > 0) ticksRemaining--;
+        // Switch to weapon
+        switchToSlot(targetSlot);
 
-        if (ticksRemaining <= 0) {
-            restoreImmediate();
+        // Perform the attack
+        mc.interactionManager.attackEntity(mc.player, event.entity);
+
+        // Swing animation
+        playSwing();
+
+        // Optionally delay before switching back
+        if (attackDelay.get() > 0) {
+            mc.execute(() -> mc.player.getInventory().selectedSlot = originalSlot, attackDelay.get());
+            mc.execute(() -> mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(originalSlot)), attackDelay.get());
+        } else {
+            // Instant revert
+            switchToSlot(originalSlot);
+        }
+
+        if (debugLogs.get()) {
+            info("Swiped entity with slot " + targetSlot + " (" + mc.player.getInventory().getStack(targetSlot).getItem().getName().getString() + ")");
         }
     }
 
-    private void restoreImmediate() {
-        if (originalSlot >= 0 && mc.player != null) {
-            mc.player.getInventory().selectedSlot = originalSlot;
-            if (mc.player.networkHandler != null) {
-                mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(originalSlot));
+    // Resolves which slot to use based on mode
+    private int resolveWeaponSlot() {
+        if (weaponMode.get() == WeaponMode.Auto) {
+            for (int i = 0; i < 9; i++) {
+                Item item = mc.player.getInventory().getStack(i).getItem();
+                if (item == Items.NETHERITE_SWORD || item == Items.DIAMOND_SWORD || 
+                    item == Items.IRON_SWORD || item == Items.NETHERITE_AXE || 
+                    item == Items.DIAMOND_AXE || item == Items.IRON_AXE) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        return weaponSlot.get();
+    }
+
+    // Handles slot switching safely
+    private void switchToSlot(int slot) {
+        mc.player.getInventory().selectedSlot = slot;
+        mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(slot));
+    }
+
+    // Handles swing animations
+    private void playSwing() {
+        switch (swingStyle.get()) {
+            case MainHand -> mc.player.swingHand(Hand.MAIN_HAND);
+            case OffHand -> mc.player.swingHand(Hand.OFF_HAND);
+            case Both -> {
+                mc.player.swingHand(Hand.MAIN_HAND);
+                mc.player.swingHand(Hand.OFF_HAND);
             }
         }
-        originalSlot = -1;
-        busy = false;
-        ticksRemaining = 0;
     }
 
-    private void playAnimation() {
-        switch (animation.get()) {
-            case Swing -> mc.player.swingHand(Hand.MAIN_HAND);
-            case Crit -> mc.player.swingHand(Hand.MAIN_HAND, true); // force crit animation
-            case None -> {} // do nothing
-        }
+    // Weapon modes
+    public enum WeaponMode {
+        Sword, Axe, Auto
     }
 
-    private int findWeaponSlot(WeaponType type) {
-        if (mc.player == null) return -1;
-        int sel = mc.player.getInventory().selectedSlot;
-        int bestSlot = -1;
-
-        for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            Item item = stack.getItem();
-
-            if (type == WeaponType.Sword && isSword(item)) {
-                bestSlot = pickClosest(bestSlot, i, sel);
-            } else if (type == WeaponType.Axe && isAxe(item)) {
-                bestSlot = pickClosest(bestSlot, i, sel);
-            }
-        }
-
-        return bestSlot;
-    }
-
-    private int pickClosest(int current, int candidate, int sel) {
-        if (current == -1) return candidate;
-        int curDist = Math.abs(current - sel);
-        int candDist = Math.abs(candidate - sel);
-        return candDist < curDist ? candidate : current;
-    }
-
-    private boolean isSword(Item item) {
-        return item == Items.NETHERITE_SWORD || item == Items.DIAMOND_SWORD ||
-               item == Items.IRON_SWORD || item == Items.STONE_SWORD ||
-               item == Items.GOLDEN_SWORD || item == Items.WOODEN_SWORD;
-    }
-
-    private boolean isAxe(Item item) {
-        return item == Items.NETHERITE_AXE || item == Items.DIAMOND_AXE ||
-               item == Items.IRON_AXE || item == Items.STONE_AXE ||
-               item == Items.GOLDEN_AXE || item == Items.WOODEN_AXE;
+    // Swing styles
+    public enum SwingStyle {
+        MainHand, OffHand, Both
     }
 }
