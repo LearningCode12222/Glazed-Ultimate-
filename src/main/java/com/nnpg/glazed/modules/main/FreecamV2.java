@@ -6,10 +6,11 @@ import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Category;
+import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.orbit.EventHandler;
 
 import net.minecraft.client.network.OtherClientPlayerEntity;
+import com.mojang.authlib.GameProfile;
 
 public class FreecamV2 extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -38,18 +39,16 @@ public class FreecamV2 extends Module {
     private OtherClientPlayerEntity dummy;
 
     public FreecamV2() {
-        // fallback to Misc category if your addon doesn't define its own
-        super(Category.Misc, "freecam-v2", "Move your camera outside your body with extra options.");
+        super(Categories.Render, "freecam-v2", "Move your camera outside your body with extra options.");
     }
 
     @Override
     public void onActivate() {
         if (mc.player == null || mc.world == null) return;
 
-        // correct constructor for OtherClientPlayerEntity
-        dummy = new OtherClientPlayerEntity(mc.world,
-            mc.getSession().getUuidOrNull(),
-            mc.getSession().getUsername()
+        dummy = new OtherClientPlayerEntity(
+            mc.world,
+            new GameProfile(mc.getSession().getUuidOrNull(), mc.getSession().getUsername())
         );
         dummy.copyPositionAndRotation(mc.player);
         dummy.setHeadYaw(mc.player.getHeadYaw());
@@ -73,9 +72,9 @@ public class FreecamV2 extends Module {
         mc.player.getAbilities().setFlySpeed(speed.get().floatValue() / 10.0f);
 
         if (mode.get() == FreecamMode.XRay) {
-            mc.options.getGamma().setValue(15.0); // ✅ correct
+            mc.options.getGamma().setValue(15.0); // xray feel
         } else {
-            mc.options.getGamma().setValue(1.0);  // ✅ correct
+            mc.options.getGamma().setValue(1.0);  // normal
         }
     }
 }
