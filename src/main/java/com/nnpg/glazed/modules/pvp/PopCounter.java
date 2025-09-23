@@ -1,52 +1,72 @@
 package com.nnpg.glazed.modules.pvp;
 
-import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
+import net.minecraft.entity.Entity;
+
+import com.nnpg.glazed.GlazedAddon;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-public class TotemPopCounter extends Module {
+/**
+ * PopCounter - tracks totem pops per-entity and total pops this session.
+ */
+public class PopCounter extends Module {
     private final SettingGroup sg = settings.getDefaultGroup();
 
-    private final Setting<Boolean> announce = sg.add(new BoolSetting.Builder()
-        .name("announce")
-        .description("Send chat message when someone pops a totem.")
-        .defaultValue(true).build()
+    private final Setting<Boolean> includeSelf = sg.add(new BoolSetting.Builder()
+        .name("count-self")
+        .description("Count your own totem pops as well.")
+        .defaultValue(false)
+        .build()
     );
 
     private final Map<UUID, Integer> pops = new HashMap<>();
+    private int totalPops = 0;
 
-    public TotemPopCounter() {
-        super(GlazedAddon.pvp, "totem-pop-counter", "Counts how many totems players have popped.");
+    public PopCounter() {
+        super(GlazedAddon.pvp, "pop-counter", "Counts totem pops per player and total pops.");
+    }
+
+    @Override
+    public void onActivate() {
+        pops.clear();
+        totalPops = 0;
     }
 
     @EventHandler
-    private void onPacket(PacketEvent.Receive event) {
+    private void onPacketReceive(PacketEvent.Receive event) {
         if (!(event.packet instanceof EntityStatusS2CPacket packet)) return;
-        if (packet.getStatus() != 35) return; // 35 = totem pop
+        // 35 is the totem pop status
+        if (packet.getStatus() != 35) return;
 
         Entity e = packet.getEntity(mc.world);
-        if (e instanceof PlayerEntity p) {
-            UUID id = p.getUuid();
-            pops.put(id, pops.getOrDefault(id, 0) + 1);
-            int count = pops.get(id);
-            if (announce.get()) info("%s popped a totem! (total: %d)", p.getName().getString(), count);
-        }
+        if (e == null) return;
+
+        if (!includeSelf.get() && e == mc.player) return;
+
+        UUID id = e.getUuid();
+        int newCount = pops.getOrDefault(id, 0) + 1;
+        pops.put(id, newCount);
+        totalPops++;
+
+        String name = e.getName().getString();
+        info("%s popped a totem (%d)", name, newCount);
     }
 
     @Override
     public String getInfoString() {
-        return String.valueOf(pops.values().stream().mapToInt(Integer::intValue).sum());
+        return String.valueOf(totalPops);
     }
 
+    /** Returns the per-uuid counts for any external use. */
     public Map<UUID, Integer> getPops() {
         return new HashMap<>(pops);
     }
