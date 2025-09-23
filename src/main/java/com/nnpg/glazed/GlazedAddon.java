@@ -85,13 +85,14 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new LegitAnchorMacro());
         Modules.get().add(new SpawnerOrder());
         Modules.get().add(new RegionMap());
+        Modules.get().add(new PopCounter());
         Modules.get().add(new HoverTotem());
         Modules.get().add(new Itemswap());
         Modules.get().add(new AutoTrident());
         Modules.get().add(new AutoTreeFarmer());
         Modules.get().add(new GhostTotem());
-        Modules.get().add(new PopCounter());
-        Modules.get().add(new TotemPopAlert());
+         Modules.get().add(new TotemPopAlert())
+       ;
 
 
 
