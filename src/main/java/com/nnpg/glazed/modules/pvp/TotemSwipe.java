@@ -32,8 +32,7 @@ public class TotemSwipe extends Module {
     );
 
     public TotemSwipe() {
-        super(GlazedAddon.PVP, "totem-swipe", "Swings your hand when a totem pops.");
-    }
+        super(GlazedAddon.pvp, "totem-swipe", "Swings your hand when a totem pops.");
 
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
