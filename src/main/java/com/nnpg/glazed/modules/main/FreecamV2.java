@@ -6,11 +6,12 @@ import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.orbit.EventHandler;
 
 import net.minecraft.client.network.OtherClientPlayerEntity;
-import com.mojang.authlib.GameProfile;
+import net.minecraft.entity.player.PlayerEntity;
+
+import com.nnpg.glazed.GlazedAddon;
 
 public class FreecamV2 extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -39,26 +40,27 @@ public class FreecamV2 extends Module {
     private OtherClientPlayerEntity dummy;
 
     public FreecamV2() {
-        super(Categories.Render, "freecam-v2", "Move your camera outside your body with extra options.");
+        // use a valid category from GlazedAddon (main/pvp/render/etc.)
+        super(GlazedAddon.main, "freecam-v2", "Move your camera outside your body with extra options.");
     }
 
     @Override
     public void onActivate() {
         if (mc.player == null || mc.world == null) return;
 
-        dummy = new OtherClientPlayerEntity(
-            mc.world,
-            new GameProfile(mc.getSession().getUuidOrNull(), mc.getSession().getUsername())
-        );
+        // create a dummy entity to represent your body
+        dummy = new OtherClientPlayerEntity(mc.world, mc.getSession().getProfile());
         dummy.copyPositionAndRotation(mc.player);
         dummy.setHeadYaw(mc.player.getHeadYaw());
 
+        // ✅ Corrected: addEntity only takes one arg
         mc.world.addEntity(dummy);
     }
 
     @Override
     public void onDeactivate() {
         if (mc.world != null && dummy != null) {
+            // ✅ Corrected: discard entity instead of using RemovalReason
             dummy.discard();
             dummy = null;
         }
@@ -68,13 +70,15 @@ public class FreecamV2 extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null) return;
 
+        // Apply speed setting to movement
         mc.player.getAbilities().flying = true;
         mc.player.getAbilities().setFlySpeed(speed.get().floatValue() / 10.0f);
 
+        // Mode handling
         if (mode.get() == FreecamMode.XRay) {
-            mc.options.getGamma().setValue(15.0); // xray feel
+            mc.options.gamma = 15.0; // fullbright/xray feel
         } else {
-            mc.options.getGamma().setValue(1.0);  // normal
+            mc.options.gamma = 1.0; // reset gamma
         }
     }
 }
