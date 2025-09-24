@@ -34,6 +34,7 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new PearlThrow()); //done
         Modules.get().add(new RTPBaseFinder()); //done
         Modules.get().add(new AntiTrap()); //done
+        Modules.get().add(new RTPer()); //done
         Modules.get().add(new CoordSnapper()); //done
         Modules.get().add(new AutoFirework()); //done
         Modules.get().add(new TotemSwipe()); //done
