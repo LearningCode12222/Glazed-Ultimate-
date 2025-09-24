@@ -3,10 +3,10 @@ package com.nnpg.glazed.modules.main;
 import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
-import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.screen.slot.SlotActionType;
 
@@ -37,6 +37,7 @@ public class AutoCursorTotem extends Module {
     );
 
     private int delayCounter = 0;
+    private boolean openedInventoryThisCycle = false;
 
     public AutoCursorTotem() {
         super(GlazedAddon.pvp, "auto-cursor-totem", "Automatically moves a totem to your offhand using the cursor.");
@@ -46,35 +47,65 @@ public class AutoCursorTotem extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.interactionManager == null) return;
 
-        // Auto open inventory if enabled
-        if (autoOpenInventory.get() && !(mc.currentScreen instanceof InventoryScreen)) {
-            mc.setScreen(new InventoryScreen(mc.player));
+        // Already has a totem in offhand -> do nothing
+        ItemStack offhand = mc.player.getOffHandStack();
+        if (offhand.getItem() == Items.TOTEM_OF_UNDYING) {
+            openedInventoryThisCycle = false;
             return;
         }
 
-        if (manualMode.get() && !(mc.currentScreen instanceof InventoryScreen)) return;
-        if (!(mc.currentScreen instanceof InventoryScreen)) return;
+        // Handle auto/manual inventory opening
+        if (!(mc.currentScreen instanceof InventoryScreen)) {
+            if (manualMode.get()) return;
+            if (autoOpenInventory.get() && !openedInventoryThisCycle) {
+                mc.setScreen(new InventoryScreen(mc.player));
+                openedInventoryThisCycle = true;
+            }
+            return;
+        }
 
+        // Delay between clicks
         if (delayCounter > 0) {
             delayCounter--;
             return;
         }
 
-        int totemSlot = -1;
+        int totemSlot = findTotem();
+        if (totemSlot == -1) return;
 
-        // Find a totem in inventory (slots 9–44 are inventory)
+        int offhandSlot = 45; // offhand index
+
+        // Pick up totem
+        clickSlot(totemSlot);
+
+        // Place into offhand
+        clickSlot(offhandSlot);
+
+        // Put back leftovers if still holding something
+        if (!mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
+            clickSlot(totemSlot);
+        }
+
+        delayCounter = clickDelay.get().intValue();
+    }
+
+    private int findTotem() {
+        // Slots 9–44 map to inventory (0–35)
         for (int i = 9; i < 45; i++) {
             if (mc.player.getInventory().getStack(i - 9).getItem() == Items.TOTEM_OF_UNDYING) {
-                totemSlot = i;
-                break;
+                return i;
             }
         }
+        return -1;
+    }
 
-        if (totemSlot != -1) {
-            int offhandSlot = 45; // offhand slot index
-            mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, totemSlot, 0, SlotActionType.PICKUP, mc.player);
-            mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, offhandSlot, 0, SlotActionType.PICKUP, mc.player);
-            delayCounter = clickDelay.get().intValue();
-        }
+    private void clickSlot(int slot) {
+        mc.interactionManager.clickSlot(
+            mc.player.currentScreenHandler.syncId,
+            slot,
+            0,
+            SlotActionType.PICKUP,
+            mc.player
+        );
     }
 }
