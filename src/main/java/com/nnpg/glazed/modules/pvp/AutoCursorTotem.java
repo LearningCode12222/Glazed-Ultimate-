@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import org.lwjgl.glfw.GLFW;
+
 public class AutoCursorTotem extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -57,7 +59,7 @@ public class AutoCursorTotem extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.interactionManager == null) return;
 
-        // Already has totem in offhand -> reset state
+        // Already has totem in offhand
         if (mc.player.getOffHandStack().getItem() == Items.TOTEM_OF_UNDYING) {
             if (closeTimer > 0) {
                 closeTimer--;
@@ -78,8 +80,10 @@ public class AutoCursorTotem extends Module {
         }
         if (!(mc.currentScreen instanceof InventoryScreen)) return;
 
+        InventoryScreen invScreen = (InventoryScreen) mc.currentScreen;
+
         if (!swapping) {
-            // Collect totem slots
+            // Find totem slots
             List<Slot> totemSlots = new ArrayList<>();
             for (Slot slot : mc.player.currentScreenHandler.slots) {
                 if (slot.getStack().getItem() == Items.TOTEM_OF_UNDYING && slot.id >= 9 && slot.id < 45) {
@@ -94,16 +98,13 @@ public class AutoCursorTotem extends Module {
             hoverTimer = hoverTime.get();
         } else {
             if (hoverTimer > 0) {
-                // Move the cursor visually over the target slot
-                double x = mc.getWindow().getScaledWidth() / 2.0;
-                double y = mc.getWindow().getScaledHeight() / 2.0;
-
                 if (targetSlot != null) {
-                    x = ((InventoryScreen) mc.currentScreen).x + targetSlot.x + 8;
-                    y = ((InventoryScreen) mc.currentScreen).y + targetSlot.y + 8;
-                }
+                    double x = invScreen.getX() + targetSlot.x + 8;
+                    double y = invScreen.getY() + targetSlot.y + 8;
 
-                mc.mouse.setCursorPosition(x * mc.getWindow().getScaleFactor(), y * mc.getWindow().getScaleFactor());
+                    long window = mc.getWindow().getHandle();
+                    GLFW.glfwSetCursorPos(window, x * mc.getWindow().getScaleFactor(), y * mc.getWindow().getScaleFactor());
+                }
                 hoverTimer--;
                 return;
             }
@@ -115,7 +116,7 @@ public class AutoCursorTotem extends Module {
                 mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, offhandSlot, 0, SlotActionType.PICKUP, mc.player);
             }
 
-            // Reset + prepare to close
+            // Prepare to close
             closeTimer = closeDelay.get();
             swapping = false;
         }
