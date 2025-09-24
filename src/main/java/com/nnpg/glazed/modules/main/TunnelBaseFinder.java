@@ -12,6 +12,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.world.chunk.ChunkStatus;
 
 public class TunnelBaseFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -54,6 +55,7 @@ public class TunnelBaseFinder extends Module {
 
     @Override
     public void onDeactivate() {
+        // Reset pressed keys when toggled off
         GameOptions options = mc.options;
         options.leftKey.setPressed(false);
         options.rightKey.setPressed(false);
@@ -62,10 +64,12 @@ public class TunnelBaseFinder extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || currentDirection == null) return;
+        if (mc.player == null || mc.world == null || currentDirection == null) return;
 
+        // Keep player slightly pitched down like original Krypton
         mc.player.setPitch(2.0f);
 
+        // Scan for bases / spawners
         notifyFound();
     }
 
@@ -84,7 +88,6 @@ public class TunnelBaseFinder extends Module {
         int spawnerNearby = 0;
         BlockPos foundPos = null;
 
-        // ✅ Instead of getLoadedChunks, iterate chunks around player in render distance
         int viewDist = mc.options.getViewDistance().getValue();
         BlockPos playerPos = mc.player.getBlockPos();
 
@@ -93,6 +96,7 @@ public class TunnelBaseFinder extends Module {
                 WorldChunk chunk = mc.world.getChunkManager().getChunk(
                     (playerPos.getX() >> 4) + dx,
                     (playerPos.getZ() >> 4) + dz,
+                    ChunkStatus.FULL,
                     false
                 );
 
@@ -106,9 +110,12 @@ public class TunnelBaseFinder extends Module {
                         spawnerNearby++;
                         foundPos = pos;
                     }
-                    if (be instanceof ChestBlockEntity || be instanceof EnderChestBlockEntity ||
-                        be instanceof FurnaceBlockEntity || be instanceof BarrelBlockEntity ||
-                        be instanceof EnchantingTableBlockEntity) {
+
+                    if (be instanceof ChestBlockEntity
+                        || be instanceof EnderChestBlockEntity
+                        || be instanceof FurnaceBlockEntity
+                        || be instanceof BarrelBlockEntity
+                        || be instanceof EnchantingTableBlockEntity) {
                         storage++;
                     }
                 }
@@ -116,7 +123,7 @@ public class TunnelBaseFinder extends Module {
         }
 
         if (spawnerNearby > 10 && foundPos != null) {
-            notifyFound("Spawner found", foundPos.getX(), foundPos.getY(), foundPos.getZ(), false);
+            notifyFound("Spawner cluster found", foundPos.getX(), foundPos.getY(), foundPos.getZ(), false);
             spawnerCount = 0;
         }
 
@@ -128,16 +135,19 @@ public class TunnelBaseFinder extends Module {
 
     private void notifyFound(String msg, int x, int y, int z, boolean base) {
         if (discordNotification.get()) {
-            info("Discord notify: " + msg + " at " + x + " " + y + " " + z);
+            info("[Discord notify] " + msg + " at " + x + " " + y + " " + z);
         }
-        toggle();
+
+        // Gracefully disconnect with message
         disconnectWithMessage(Text.of(msg));
+        toggle(); // disable module after notification
     }
 
     private void disconnectWithMessage(Text text) {
-        MutableText literal = Text.literal("[TunnelBaseFinder] ").append(text);
-        toggle();
-        mc.player.networkHandler.getConnection().disconnect(literal);
+        if (mc.player != null && mc.player.networkHandler != null) {
+            MutableText literal = Text.literal("[TunnelBaseFinder] ").append(text);
+            mc.player.networkHandler.getConnection().disconnect(literal);
+        }
     }
 
     public boolean isDigging() {
