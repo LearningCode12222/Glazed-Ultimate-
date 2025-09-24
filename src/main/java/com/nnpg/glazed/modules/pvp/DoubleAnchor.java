@@ -25,17 +25,17 @@ public class DoubleAnchor extends Module {
         .build()
     );
 
-    private final Setting<Boolean> autoCharge = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-charge")
-        .description("Automatically charges anchors with glowstone.")
+    private final Setting<Boolean> autoExplode = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-explode")
+        .description("Automatically charges + explodes anchors with glowstone.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
-        .name("delay")
-        .description("Delay between actions in ticks.")
-        .defaultValue(3)
+        .name("cycle-delay")
+        .description("Delay between full anchor explosions (ticks).")
+        .defaultValue(0)
         .min(0)
         .sliderMax(20)
         .build()
@@ -44,7 +44,7 @@ public class DoubleAnchor extends Module {
     private int tickCounter = 0;
 
     public DoubleAnchor() {
-        super(GlazedAddon.pvp, "double-anchor", "Handles double respawn anchor interactions.");
+        super(GlazedAddon.pvp, "double-anchor", "Spams respawn anchors by instantly placing and exploding them.");
     }
 
     @EventHandler
@@ -58,50 +58,45 @@ public class DoubleAnchor extends Module {
 
         BlockPos targetPos = mc.player.getBlockPos().offset(mc.player.getHorizontalFacing());
 
-        // Auto place respawn anchor
-        if (autoPlace.get()) {
-            if (mc.world.getBlockState(targetPos).isAir()) {
-                var anchor = InvUtils.findInHotbar(Items.RESPAWN_ANCHOR);
-                if (anchor.found()) {
-                    int prevSlot = mc.player.getInventory().selectedSlot;
-                    InvUtils.swap(anchor.slot(), true);
-
-                    placeBlock(targetPos);
-                    InvUtils.swap(prevSlot, true);
-                }
+        // Place anchor if air
+        if (autoPlace.get() && mc.world.getBlockState(targetPos).isAir()) {
+            var anchor = InvUtils.findInHotbar(Items.RESPAWN_ANCHOR);
+            if (anchor.found()) {
+                int prevSlot = mc.player.getInventory().selectedSlot;
+                InvUtils.swap(anchor.slot(), true);
+                placeBlock(targetPos);
+                InvUtils.swap(prevSlot, true);
             }
         }
 
-        // Auto charge with glowstone
-        if (autoCharge.get()) {
-            if (mc.world.getBlockState(targetPos).getBlock() == Blocks.RESPAWN_ANCHOR) {
-                var glow = InvUtils.findInHotbar(Items.GLOWSTONE);
-                if (glow.found()) {
-                    int prevSlot = mc.player.getInventory().selectedSlot;
-                    InvUtils.swap(glow.slot(), true);
-
-                    interactBlock(targetPos);
-                    InvUtils.swap(prevSlot, true);
-                }
+        // Charge + explode instantly
+        if (autoExplode.get() && mc.world.getBlockState(targetPos).getBlock() == Blocks.RESPAWN_ANCHOR) {
+            var glow = InvUtils.findInHotbar(Items.GLOWSTONE);
+            if (glow.found()) {
+                int prevSlot = mc.player.getInventory().selectedSlot;
+                InvUtils.swap(glow.slot(), true);
+                interactBlock(targetPos); // charges + triggers explosion instantly
+                InvUtils.swap(prevSlot, true);
+                tickCounter = delay.get(); // cycle reset
             }
         }
-
-        tickCounter = delay.get();
     }
 
     private void placeBlock(BlockPos pos) {
         Vec3d hitPos = Vec3d.ofCenter(pos);
         BlockHitResult bhr = new BlockHitResult(hitPos, Direction.UP, pos, false);
-        Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, bhr);
-        });
+        Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () ->
+            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, bhr)
+        );
+        mc.player.swingHand(Hand.MAIN_HAND);
     }
 
     private void interactBlock(BlockPos pos) {
         Vec3d hitPos = Vec3d.ofCenter(pos);
         BlockHitResult bhr = new BlockHitResult(hitPos, Direction.UP, pos, false);
-        Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, bhr);
-        });
+        Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () ->
+            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, bhr)
+        );
+        mc.player.swingHand(Hand.MAIN_HAND);
     }
 }
