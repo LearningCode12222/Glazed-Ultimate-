@@ -38,7 +38,7 @@ public class AutoCursorTotem extends Module {
     private int delayCounter = 0;
 
     public AutoCursorTotem() {
-        super(Categories.Pvp, "auto-cursor-totem", "Automatically moves a totem to your offhand using the cursor.");
+        super(GlazedAddon.pvp, "auto-cursor-totem", "Automatically moves a totem to your offhand using the cursor.");
     }
 
     @EventHandler
