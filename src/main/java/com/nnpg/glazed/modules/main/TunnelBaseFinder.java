@@ -1,7 +1,9 @@
 package com.nnpg.glazed.modules.main;
 
 import com.nnpg.glazed.GlazedAddon;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
@@ -17,27 +19,15 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.chunk.ChunkStatus;
 
-import java.util.List;
+import java.awt.*;
+import java.util.*;
 
 public class TunnelBaseFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgDetect = settings.createGroup("Detection");
+    private final SettingGroup sgRender = settings.createGroup("ESP");
 
-    private final Setting<Double> minimumStorage = sgGeneral.add(new DoubleSetting.Builder()
-        .name("minimum-storage")
-        .description("Minimum number of storage blocks before notifying.")
-        .defaultValue(100.0)
-        .min(1.0).max(500.0)
-        .sliderMax(500.0)
-        .build()
-    );
-
-    private final Setting<Boolean> spawners = sgGeneral.add(new BoolSetting.Builder()
-        .name("spawners")
-        .description("Notify when spawners are found.")
-        .defaultValue(true)
-        .build()
-    );
-
+    // General
     private final Setting<Boolean> discordNotification = sgGeneral.add(new BoolSetting.Builder()
         .name("discord-notification")
         .description("Send notification to Discord (requires webhook system).")
@@ -52,47 +42,104 @@ public class TunnelBaseFinder extends Module {
         .build()
     );
 
-    private Direction currentDirection;
-    private int spawnerCount;
+    // Detection
+    private final Setting<Integer> baseThreshold = sgDetect.add(new IntSetting.Builder()
+        .name("base-threshold")
+        .description("How many selected blocks before base is detected.")
+        .defaultValue(50)
+        .min(1)
+        .sliderMax(500)
+        .build()
+    );
 
-    // Detour state
+    private final Setting<Boolean> detectChests = sgDetect.add(new BoolSetting.Builder()
+        .name("detect-chests")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> detectShulkers = sgDetect.add(new BoolSetting.Builder()
+        .name("detect-shulkers")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> detectBarrels = sgDetect.add(new BoolSetting.Builder()
+        .name("detect-barrels")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> detectSpawners = sgDetect.add(new BoolSetting.Builder()
+        .name("detect-spawners")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> detectFurnaces = sgDetect.add(new BoolSetting.Builder()
+        .name("detect-furnaces")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> detectRedstone = sgDetect.add(new BoolSetting.Builder()
+        .name("detect-redstone")
+        .defaultValue(false)
+        .build()
+    );
+
+    // ESP settings
+    private final Setting<Color> espColor = sgRender.add(new ColorSetting.Builder()
+        .name("esp-color")
+        .description("Color of ESP boxes.")
+        .defaultValue(new Color(0, 255, 0, 80))
+        .build()
+    );
+
+    private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder()
+        .name("esp-outline")
+        .defaultValue(true)
+        .build()
+    );
+
+    // State
+    private Direction currentDirection;
     private boolean avoidingHazard = false;
     private Direction savedDirection;
     private int detourBlocksRemaining = 0;
+    private final List<BlockPos> detectedBlocks = new ArrayList<>();
 
-    // Y limits for tunneling
     private final int minY = -64;
     private final int maxY = 0;
 
     public TunnelBaseFinder() {
-        super(GlazedAddon.CATEGORY, "TunnelBaseFinder", "Finds tunnel bases by digging, scanning, and tunneling.");
+        super(GlazedAddon.CATEGORY, "TunnelBaseFinder", "Finds tunnel bases with ESP and smart detection.");
     }
 
     @Override
     public void onActivate() {
         currentDirection = getInitialDirection();
-        spawnerCount = 0;
         avoidingHazard = false;
         detourBlocksRemaining = 0;
+        detectedBlocks.clear();
     }
 
     @Override
     public void onDeactivate() {
-        // Reset pressed keys when toggled off
         GameOptions options = mc.options;
         options.leftKey.setPressed(false);
         options.rightKey.setPressed(false);
         options.forwardKey.setPressed(false);
+        detectedBlocks.clear();
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null || currentDirection == null) return;
 
-        // Keep player slightly pitched down like original Krypton
         mc.player.setPitch(2.0f);
 
-        // Auto walk + mine if underground
+        // Auto walk + mine
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
@@ -104,7 +151,6 @@ public class TunnelBaseFinder extends Module {
                         mineForward();
                         detourBlocksRemaining--;
                     } else {
-                        // Finished detour -> restore original direction
                         currentDirection = savedDirection;
                         avoidingHazard = false;
                     }
@@ -112,9 +158,8 @@ public class TunnelBaseFinder extends Module {
                     if (!detectHazards()) {
                         mineForward();
                     } else {
-                        // Start detour
                         savedDirection = currentDirection;
-                        currentDirection = turnLeft(savedDirection); // you can swap to turnRight() or random
+                        currentDirection = turnLeft(savedDirection);
                         detourBlocksRemaining = 10;
                         avoidingHazard = true;
                         info("Detouring around hazard for 10 blocks...");
@@ -125,8 +170,16 @@ public class TunnelBaseFinder extends Module {
             }
         }
 
-        // Scan for bases / spawners
+        // Scan blocks
         notifyFound();
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        for (BlockPos pos : detectedBlocks) {
+            event.renderer.box(pos, espColor.get(), espColor.get(),
+                ShapeMode.Both, 0);
+        }
     }
 
     private Direction getInitialDirection() {
@@ -168,21 +221,18 @@ public class TunnelBaseFinder extends Module {
         };
     }
 
-    // Detect lava, water, and dropped items within 10 blocks
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
 
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
             BlockState state = mc.world.getBlockState(pos);
 
-            // Lava or water detection
             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
                 warning("Hazard detected: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
                 return true;
             }
         }
 
-        // Item drop detection
         List<ItemEntity> items = mc.world.getEntitiesByClass(ItemEntity.class, mc.player.getBoundingBox().expand(10), e -> true);
         if (!items.isEmpty()) {
             warning("Dropped items detected nearby!");
@@ -194,8 +244,7 @@ public class TunnelBaseFinder extends Module {
 
     private void notifyFound() {
         int storage = 0;
-        int spawnerNearby = 0;
-        BlockPos foundPos = null;
+        detectedBlocks.clear();
 
         int viewDist = mc.options.getViewDistance().getValue();
         BlockPos playerPos = mc.player.getBlockPos();
@@ -215,41 +264,48 @@ public class TunnelBaseFinder extends Module {
                     BlockEntity be = mc.world.getBlockEntity(pos);
                     if (be == null) continue;
 
-                    if (spawners.get() && be instanceof MobSpawnerBlockEntity) {
-                        spawnerNearby++;
-                        foundPos = pos;
-                    }
-
-                    if (be instanceof ChestBlockEntity
-                        || be instanceof EnderChestBlockEntity
-                        || be instanceof FurnaceBlockEntity
-                        || be instanceof BarrelBlockEntity
-                        || be instanceof EnchantingTableBlockEntity) {
+                    if (detectSpawners.get() && be instanceof MobSpawnerBlockEntity) {
                         storage++;
+                        detectedBlocks.add(pos);
+                    }
+                    if (detectChests.get() && be instanceof ChestBlockEntity) {
+                        storage++;
+                        detectedBlocks.add(pos);
+                    }
+                    if (detectBarrels.get() && be instanceof BarrelBlockEntity) {
+                        storage++;
+                        detectedBlocks.add(pos);
+                    }
+                    if (detectFurnaces.get() && be instanceof FurnaceBlockEntity) {
+                        storage++;
+                        detectedBlocks.add(pos);
+                    }
+                    if (detectShulkers.get() && be instanceof ShulkerBoxBlockEntity) {
+                        storage++;
+                        detectedBlocks.add(pos);
+                    }
+                    // Example redstone detection: piston block entities
+                    if (detectRedstone.get() && be instanceof PistonBlockEntity) {
+                        storage++;
+                        detectedBlocks.add(pos);
                     }
                 }
             }
         }
 
-        if (spawnerNearby > 10 && foundPos != null) {
-            notifyFound("Spawner cluster found", foundPos.getX(), foundPos.getY(), foundPos.getZ(), false);
-            spawnerCount = 0;
-        }
-
-        if (storage > minimumStorage.get()) {
+        if (storage > baseThreshold.get()) {
             Vec3d p = mc.player.getPos();
-            notifyFound("Base found", (int) p.x, (int) p.y, (int) p.z, true);
+            notifyFound("Base found", (int) p.x, (int) p.y, (int) p.z);
         }
     }
 
-    private void notifyFound(String msg, int x, int y, int z, boolean base) {
+    private void notifyFound(String msg, int x, int y, int z) {
         if (discordNotification.get()) {
             info("[Discord notify] " + msg + " at " + x + " " + y + " " + z);
         }
 
-        // Gracefully disconnect with message
         disconnectWithMessage(Text.of(msg));
-        toggle(); // disable module after notification
+        toggle();
     }
 
     private void disconnectWithMessage(Text text) {
@@ -259,25 +315,21 @@ public class TunnelBaseFinder extends Module {
         }
     }
 
-    public boolean isDigging() {
-        return false;
-    }
-
     private Direction turnLeft(Direction dir) {
         return switch (dir) {
             case NORTH -> Direction.WEST;
-            case WEST  -> Direction.SOUTH;
+            case WEST -> Direction.SOUTH;
             case SOUTH -> Direction.EAST;
-            case EAST  -> Direction.NORTH;
+            case EAST -> Direction.NORTH;
         };
     }
 
     private Direction turnRight(Direction dir) {
         return switch (dir) {
             case NORTH -> Direction.EAST;
-            case EAST  -> Direction.SOUTH;
+            case EAST -> Direction.SOUTH;
             case SOUTH -> Direction.WEST;
-            case WEST  -> Direction.NORTH;
+            case WEST -> Direction.NORTH;
         };
     }
 
