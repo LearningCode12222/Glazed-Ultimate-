@@ -28,8 +28,6 @@ public class GlazedAddon extends MeteorAddon {
     @Override
     public void onInitialize() {
 
-
-
         Modules.get().add(new SpawnerProtect()); //done
         Modules.get().add(new PearlThrow()); //done
         Modules.get().add(new RTPBaseFinder()); //done
@@ -79,7 +77,7 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new ShopBuyer());
         Modules.get().add(new UndetectedTunneler());
         Modules.get().add(new OrderDropper());
-        modules.add(new DoubleAnchor());
+        Modules.get().add(new DoubleAnchor());
         Modules.get().add(new ElytraAutoFly());
         Modules.get().add(new CollectibleESP());
         Modules.get().add(new SpawnerNotifier());
@@ -95,10 +93,8 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new AutoTrident());
         Modules.get().add(new AutoTreeFarmer());
         Modules.get().add(new GhostTotem());
-         Modules.get().add(new TotemPopAlert())
+        Modules.get().add(new TotemPopAlert())
        ;
-
-
 
         // Register this class for events
         MeteorClient.EVENT_BUS.subscribe(this);
