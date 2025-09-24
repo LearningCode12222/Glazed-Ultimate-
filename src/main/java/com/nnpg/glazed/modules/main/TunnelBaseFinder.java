@@ -19,8 +19,8 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.chunk.ChunkStatus;
 
-import java.awt.*;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class TunnelBaseFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -89,10 +89,10 @@ public class TunnelBaseFinder extends Module {
     );
 
     // ESP settings
-    private final Setting<Color> espColor = sgRender.add(new ColorSetting.Builder()
+    private final Setting<meteordevelopment.meteorclient.utils.render.color.Color> espColor = sgRender.add(new ColorSetting.Builder()
         .name("esp-color")
         .description("Color of ESP boxes.")
-        .defaultValue(new Color(0, 255, 0, 80))
+        .defaultValue(new meteordevelopment.meteorclient.utils.render.color.Color(0, 255, 0, 80))
         .build()
     );
 
