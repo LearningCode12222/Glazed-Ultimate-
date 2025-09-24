@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor; // ✅ FIXED IMPORT
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -89,10 +90,10 @@ public class TunnelBaseFinder extends Module {
     );
 
     // ESP settings
-    private final Setting<meteordevelopment.meteorclient.utils.render.color.Color> espColor = sgRender.add(new ColorSetting.Builder()
+    private final Setting<SettingColor> espColor = sgRender.add(new ColorSetting.Builder() // ✅ FIXED TYPE
         .name("esp-color")
         .description("Color of ESP boxes.")
-        .defaultValue(new meteordevelopment.meteorclient.utils.render.color.Color(0, 255, 0, 80))
+        .defaultValue(new SettingColor(0, 255, 0, 80)) // ✅ FIXED DEFAULT VALUE
         .build()
     );
 
