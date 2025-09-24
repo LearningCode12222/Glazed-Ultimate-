@@ -2,16 +2,17 @@ package com.nnpg.glazed.modules.pvp;
 
 import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 
 import java.util.*;
 
@@ -65,7 +66,7 @@ public class TotemTweaks extends Module {
     private final Setting<String> hudColor = sgHud.add(new StringSetting.Builder()
         .name("hud-color")
         .description("Color of the HUD text (hex).")
-        .defaultValue("#FFD700")
+        .defaultValue("#FFD700") // gold
         .build()
     );
 
@@ -73,8 +74,11 @@ public class TotemTweaks extends Module {
     private int currentDelay = 0;
     private final Random random = new Random();
 
+    // Track popped totems
+    private final Map<String, Integer> poppedMap = new HashMap<>();
+
     public TotemTweaks() {
-        super(GlazedAddon.pvp, "totem-tweaks", "Enhances totem handling with HUD and randomization.");
+        super(GlazedAddon.pvp, "totem-tweaks", "Enhances totem handling with HUD, pop tracking, and randomization.");
     }
 
     @EventHandler
@@ -124,8 +128,20 @@ public class TotemTweaks extends Module {
         }
     }
 
+    // You’ll need to remove this if PopTotemEvent doesn’t exist in your Meteor version
+    /*
     @EventHandler
-    private void onRender2D(Render2DEvent event) {
+    private void onTotemPop(PopTotemEvent event) {
+        if (!(event.entity instanceof PlayerEntity player)) return;
+        String name = player.getEntityName();
+
+        poppedMap.put(name, poppedMap.getOrDefault(name, 0) + 1);
+        mc.inGameHud.getChatHud().addMessage(Text.literal("[TotemTweaks] " + name + " popped " + poppedMap.get(name) + " totems."));
+    }
+    */
+
+    @Override
+    public void onRender2D(meteordevelopment.meteorclient.events.render.Render2DEvent event) {
         int count = countTotems();
         String text = "Totems: " + count;
 
@@ -133,6 +149,16 @@ public class TotemTweaks extends Module {
         TextRenderer.get().begin(hudScale.get(), false, true);
         TextRenderer.get().render(text, 5, 30, parseColor(hudColor.get()));
         TextRenderer.get().end();
+
+        // Draw popped totem info
+        int y = 50;
+        for (Map.Entry<String, Integer> entry : poppedMap.entrySet()) {
+            String line = entry.getKey() + ": " + entry.getValue();
+            TextRenderer.get().begin(hudScale.get(), false, true);
+            TextRenderer.get().render(line, 5, y, new Color(255, 85, 85)); // red
+            TextRenderer.get().end();
+            y += 12;
+        }
     }
 
     private int countTotems() {
@@ -143,11 +169,15 @@ public class TotemTweaks extends Module {
         return total + (mc.player.getOffHandStack().getItem() == Items.TOTEM_OF_UNDYING ? 1 : 0);
     }
 
-    private int parseColor(String hex) {
+    private Color parseColor(String hex) {
         try {
-            return Integer.parseInt(hex.replace("#", ""), 16);
+            int rgb = Integer.parseInt(hex.replace("#", ""), 16);
+            int r = (rgb >> 16) & 0xFF;
+            int g = (rgb >> 8) & 0xFF;
+            int b = rgb & 0xFF;
+            return new Color(r, g, b);
         } catch (Exception e) {
-            return 0xFFFFFF;
+            return new Color(255, 255, 255); // fallback white
         }
     }
 }
