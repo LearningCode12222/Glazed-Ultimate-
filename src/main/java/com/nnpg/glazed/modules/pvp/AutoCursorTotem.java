@@ -10,6 +10,10 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.screen.slot.SlotActionType;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
 public class AutoCursorTotem extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -22,22 +26,9 @@ public class AutoCursorTotem extends Module {
         .build()
     );
 
-    private final Setting<Boolean> autoOpenInventory = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-open-inventory")
-        .description("Automatically opens inventory if not already open.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> manualMode = sgGeneral.add(new BoolSetting.Builder()
-        .name("manual-mode")
-        .description("Only works if you manually open inventory.")
-        .defaultValue(false)
-        .build()
-    );
-
     private int delayCounter = 0;
-    private boolean openedInventoryThisCycle = false;
+    private boolean working = false; // true while moving items
+    private int totemSlot = -1;
 
     public AutoCursorTotem() {
         super(GlazedAddon.pvp, "auto-cursor-totem", "Automatically moves a totem to your offhand using the cursor.");
@@ -47,56 +38,67 @@ public class AutoCursorTotem extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.interactionManager == null) return;
 
-        // Already has a totem in offhand -> do nothing
+        // Already has a totem in offhand
         ItemStack offhand = mc.player.getOffHandStack();
         if (offhand.getItem() == Items.TOTEM_OF_UNDYING) {
-            openedInventoryThisCycle = false;
-            return;
-        }
-
-        // Handle auto/manual inventory opening
-        if (!(mc.currentScreen instanceof InventoryScreen)) {
-            if (manualMode.get()) return;
-            if (autoOpenInventory.get() && !openedInventoryThisCycle) {
-                mc.setScreen(new InventoryScreen(mc.player));
-                openedInventoryThisCycle = true;
+            if (mc.currentScreen instanceof InventoryScreen && working) {
+                mc.player.closeHandledScreen(); // close inventory after success
             }
+            working = false;
             return;
         }
 
-        // Delay between clicks
+        // Delay timer
         if (delayCounter > 0) {
             delayCounter--;
             return;
         }
 
-        int totemSlot = findTotem();
-        if (totemSlot == -1) return;
+        // Step 1: Open inventory if not already
+        if (!(mc.currentScreen instanceof InventoryScreen)) {
+            mc.setScreen(new InventoryScreen(mc.player));
+            working = true;
+            delayCounter = clickDelay.get().intValue();
+            return;
+        }
 
-        int offhandSlot = 45; // offhand index
+        // Step 2: If inventory open, find a totem
+        if (totemSlot == -1) {
+            totemSlot = findRandomTotem();
+            if (totemSlot == -1) {
+                // No totem found -> close and stop
+                mc.player.closeHandledScreen();
+                working = false;
+                return;
+            }
+        }
 
-        // Pick up totem
-        clickSlot(totemSlot);
+        // Step 3: Move totem into offhand
+        int offhandSlot = 45;
+        clickSlot(totemSlot); // pick up totem
+        clickSlot(offhandSlot); // put in offhand
 
-        // Place into offhand
-        clickSlot(offhandSlot);
-
-        // Put back leftovers if still holding something
+        // Step 4: If still holding something, put it back
         if (!mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
             clickSlot(totemSlot);
         }
 
+        // Step 5: Close inventory after operation
+        mc.player.closeHandledScreen();
+        working = false;
+        totemSlot = -1;
         delayCounter = clickDelay.get().intValue();
     }
 
-    private int findTotem() {
-        // Slots 9–44 map to inventory (0–35)
+    private int findRandomTotem() {
+        List<Integer> slots = new ArrayList<>();
         for (int i = 9; i < 45; i++) {
             if (mc.player.getInventory().getStack(i - 9).getItem() == Items.TOTEM_OF_UNDYING) {
-                return i;
+                slots.add(i);
             }
         }
-        return -1;
+        if (slots.isEmpty()) return -1;
+        return slots.get(new Random().nextInt(slots.size())); // pick random
     }
 
     private void clickSlot(int slot) {
