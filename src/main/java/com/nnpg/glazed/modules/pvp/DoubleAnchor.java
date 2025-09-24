@@ -18,66 +18,106 @@ import net.minecraft.util.math.Vec3d;
 public class DoubleAnchor extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    private final Setting<Boolean> autoPlace = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-place")
-        .description("Automatically places anchors when enabled.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> autoExplode = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-explode")
-        .description("Automatically charges + explodes anchors with glowstone.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> cycleDelay = sgGeneral.add(new IntSetting.Builder()
         .name("cycle-delay")
-        .description("Delay between full anchor explosions (ticks).")
+        .description("Delay in ticks between double anchor cycles.")
         .defaultValue(0)
         .min(0)
         .sliderMax(20)
         .build()
     );
 
-    private int tickCounter = 0;
+    private final Setting<Integer> totemSlot = sgGeneral.add(new IntSetting.Builder()
+        .name("totem-slot")
+        .description("Hotbar slot to swap back to after anchoring.")
+        .defaultValue(1)
+        .min(1)
+        .sliderMax(9)
+        .build()
+    );
+
+    private int step = 0;
+    private int delayCounter = 0;
 
     public DoubleAnchor() {
-        super(GlazedAddon.pvp, "double-anchor", "Spams respawn anchors by instantly placing and exploding them.");
+        super(GlazedAddon.pvp, "double-anchor", "Automatically places + explodes 2 respawn anchors quickly.");
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null) return;
 
-        if (tickCounter > 0) {
-            tickCounter--;
+        if (delayCounter > 0) {
+            delayCounter--;
             return;
         }
 
         BlockPos targetPos = mc.player.getBlockPos().offset(mc.player.getHorizontalFacing());
+        if (mc.crosshairTarget == null) return;
 
-        // Place anchor if air
-        if (autoPlace.get() && mc.world.getBlockState(targetPos).isAir()) {
-            var anchor = InvUtils.findInHotbar(Items.RESPAWN_ANCHOR);
-            if (anchor.found()) {
-                int prevSlot = mc.player.getInventory().selectedSlot;
+        switch (step) {
+            case 0 -> {
+                // swap to anchor
+                var anchor = InvUtils.findInHotbar(Items.RESPAWN_ANCHOR);
+                if (!anchor.found()) return;
                 InvUtils.swap(anchor.slot(), true);
-                placeBlock(targetPos);
-                InvUtils.swap(prevSlot, true);
+                step++;
             }
-        }
-
-        // Charge + explode instantly
-        if (autoExplode.get() && mc.world.getBlockState(targetPos).getBlock() == Blocks.RESPAWN_ANCHOR) {
-            var glow = InvUtils.findInHotbar(Items.GLOWSTONE);
-            if (glow.found()) {
-                int prevSlot = mc.player.getInventory().selectedSlot;
+            case 1 -> {
+                // place anchor
+                if (mc.world.getBlockState(targetPos).isAir()) placeBlock(targetPos);
+                step++;
+            }
+            case 2 -> {
+                // swap to glowstone
+                var glow = InvUtils.findInHotbar(Items.GLOWSTONE);
+                if (!glow.found()) return;
                 InvUtils.swap(glow.slot(), true);
-                interactBlock(targetPos); // charges + triggers explosion instantly
-                InvUtils.swap(prevSlot, true);
-                tickCounter = delay.get(); // cycle reset
+                step++;
+            }
+            case 3 -> {
+                // charge + explode
+                if (mc.world.getBlockState(targetPos).getBlock() == Blocks.RESPAWN_ANCHOR) {
+                    interactBlock(targetPos);
+                }
+                step++;
+            }
+            case 4 -> {
+                // swap to 2nd anchor
+                var anchor = InvUtils.findInHotbar(Items.RESPAWN_ANCHOR);
+                if (!anchor.found()) return;
+                InvUtils.swap(anchor.slot(), true);
+                step++;
+            }
+            case 5 -> {
+                // place 2nd anchor
+                if (mc.world.getBlockState(targetPos).isAir()) placeBlock(targetPos);
+                step++;
+            }
+            case 6 -> {
+                // swap glowstone again
+                var glow = InvUtils.findInHotbar(Items.GLOWSTONE);
+                if (!glow.found()) return;
+                InvUtils.swap(glow.slot(), true);
+                step++;
+            }
+            case 7 -> {
+                // charge + explode second anchor
+                if (mc.world.getBlockState(targetPos).getBlock() == Blocks.RESPAWN_ANCHOR) {
+                    interactBlock(targetPos);
+                }
+                step++;
+            }
+            case 8 -> {
+                // swap back to totem slot
+                int slot = totemSlot.get() - 1;
+                if (slot >= 0 && slot < 9) InvUtils.swap(slot, true);
+                step++;
+            }
+            case 9 -> {
+                // reset cycle
+                step = 0;
+                delayCounter = cycleDelay.get();
             }
         }
     }
