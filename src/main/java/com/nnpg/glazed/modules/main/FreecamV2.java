@@ -12,11 +12,15 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.option.Perspective;
 import net.minecraft.client.network.OtherClientPlayerEntity;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
+
+import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 
 public class FreecamV2 extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -105,7 +109,6 @@ public class FreecamV2 extends Module {
     private void onPacketSend(PacketEvent.Send event) {
         if (dummy == null) return;
 
-        // Allow only block break packets, cancel everything else
         if (!(event.packet instanceof PlayerActionC2SPacket action
             && action.getAction() == PlayerActionC2SPacket.Action.START_DESTROY_BLOCK)) {
             event.cancel();
@@ -117,11 +120,17 @@ public class FreecamV2 extends Module {
     private void onMouse(MouseButtonEvent event) {
         if (dummy == null) return;
 
-        if (event.button == 0 && event.action) { // Left click pressed
+        if (event.button == 0 && event.action == KeyAction.Press) {
             // Raycast from player with frozen yaw/pitch
-            BlockPos target = mc.player.raycast(5, mc.getTickDelta(), false).getBlockPos();
-            if (target != null) {
-                mc.interactionManager.attackBlock(target, Direction.UP);
+            BlockHitResult bhr = (BlockHitResult) mc.player.raycast(
+                5.0,
+                mc.getRenderTickCounter().getTickDelta(true), // smooth delta
+                false
+            );
+
+            if (bhr != null) {
+                BlockPos target = bhr.getBlockPos();
+                mc.interactionManager.attackBlock(target, bhr.getSide());
                 mc.player.swingHand(mc.player.getActiveHand());
             }
         }
