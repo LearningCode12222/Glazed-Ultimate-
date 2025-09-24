@@ -4,12 +4,19 @@ import com.nnpg.glazed.GlazedAddon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.item.Items;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 
 public class DoubleAnchor extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    // Example settings
     private final Setting<Boolean> autoPlace = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-place")
         .description("Automatically places anchors when enabled.")
@@ -48,15 +55,53 @@ public class DoubleAnchor extends Module {
             return;
         }
 
+        BlockPos targetPos = mc.player.getBlockPos().offset(mc.player.getHorizontalFacing());
+
+        // Auto place respawn anchor
         if (autoPlace.get()) {
-            // TODO: Add anchor placement logic
+            if (mc.world.getBlockState(targetPos).isAir()) {
+                int anchorSlot = InvUtils.findItemInHotbar(Items.RESPAWN_ANCHOR);
+                if (anchorSlot != -1) {
+                    int prevSlot = mc.player.getInventory().selectedSlot;
+                    InvUtils.swap(anchorSlot, true);
+
+                    placeBlock(targetPos);
+                    InvUtils.swap(prevSlot, true);
+                }
+            }
         }
 
+        // Auto charge with glowstone
         if (autoCharge.get()) {
-            // TODO: Add glowstone charging logic
+            if (mc.world.getBlockState(targetPos).getBlock() == Items.RESPAWN_ANCHOR) {
+                int glowSlot = InvUtils.findItemInHotbar(Items.GLOWSTONE);
+                if (glowSlot != -1) {
+                    int prevSlot = mc.player.getInventory().selectedSlot;
+                    InvUtils.swap(glowSlot, true);
+
+                    interactBlock(targetPos);
+                    InvUtils.swap(prevSlot, true);
+                }
+            }
         }
 
-        // Reset delay
         tickCounter = delay.get();
     }
+
+    private void placeBlock(BlockPos pos) {
+        Vec3d hitPos = Vec3d.ofCenter(pos);
+        BlockHitResult bhr = new BlockHitResult(hitPos, Direction.UP, pos, false);
+        Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
+            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, bhr);
+        });
+    }
+
+    private void interactBlock(BlockPos pos) {
+        Vec3d hitPos = Vec3d.ofCenter(pos);
+        BlockHitResult bhr = new BlockHitResult(hitPos, Direction.UP, pos, false);
+        Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
+            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, bhr);
+        });
+    }
 }
+
