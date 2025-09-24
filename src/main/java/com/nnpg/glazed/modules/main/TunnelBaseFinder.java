@@ -9,12 +9,15 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.*;
 import net.minecraft.client.option.GameOptions;
+import net.minecraft.entity.ItemEntity;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.chunk.ChunkStatus;
+
+import java.util.List;
 
 public class TunnelBaseFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -88,7 +91,13 @@ public class TunnelBaseFinder extends Module {
             if (y <= maxY && y >= minY) {
                 GameOptions options = mc.options;
                 options.forwardKey.setPressed(true);
-                mineForward();
+
+                // Check for hazards before mining forward
+                if (!detectHazards()) {
+                    mineForward();
+                } else {
+                    options.forwardKey.setPressed(false); // stop if hazard
+                }
             } else {
                 mc.options.forwardKey.setPressed(false);
             }
@@ -135,6 +144,30 @@ public class TunnelBaseFinder extends Module {
             case EAST -> net.minecraft.util.math.Direction.EAST;
             case WEST -> net.minecraft.util.math.Direction.WEST;
         };
+    }
+
+    // Detect lava, water, and dropped items within 10 blocks
+    private boolean detectHazards() {
+        BlockPos playerPos = mc.player.getBlockPos();
+
+        for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
+            BlockState state = mc.world.getBlockState(pos);
+
+            // Lava or water detection
+            if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
+                warning("Hazard detected: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
+                return true;
+            }
+        }
+
+        // Item drop detection
+        List<ItemEntity> items = mc.world.getEntitiesByClass(ItemEntity.class, mc.player.getBoundingBox().expand(10), e -> true);
+        if (!items.isEmpty()) {
+            warning("Dropped items detected nearby!");
+            return true;
+        }
+
+        return false;
     }
 
     private void notifyFound() {
