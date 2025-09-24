@@ -1,13 +1,13 @@
 package com.nnpg.glazed.modules.pvp;
 
 import com.nnpg.glazed.GlazedAddon;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.screen.slot.SlotActionType;
@@ -74,7 +74,7 @@ public class TotemTweaks extends Module {
     private int currentDelay = 0;
     private final Random random = new Random();
 
-    // Track popped totems
+    // Track popped totems (if PopTotemEvent exists in your version, re-enable it)
     private final Map<String, Integer> poppedMap = new HashMap<>();
 
     public TotemTweaks() {
@@ -128,20 +128,8 @@ public class TotemTweaks extends Module {
         }
     }
 
-    // You’ll need to remove this if PopTotemEvent doesn’t exist in your Meteor version
-    /*
     @EventHandler
-    private void onTotemPop(PopTotemEvent event) {
-        if (!(event.entity instanceof PlayerEntity player)) return;
-        String name = player.getEntityName();
-
-        poppedMap.put(name, poppedMap.getOrDefault(name, 0) + 1);
-        mc.inGameHud.getChatHud().addMessage(Text.literal("[TotemTweaks] " + name + " popped " + poppedMap.get(name) + " totems."));
-    }
-    */
-
-    @Override
-    public void onRender2D(meteordevelopment.meteorclient.events.render.Render2DEvent event) {
+    private void onRender2D(Render2DEvent event) {
         int count = countTotems();
         String text = "Totems: " + count;
 
