@@ -32,8 +32,8 @@ public class FreecamV2 extends Module {
 
     private boolean moveForward, moveBackward, moveRight, moveLeft, moveUp, moveDown;
 
-    public Freecam() {
-        super(GlazedAddon.CATEGORY, "Freecam", "Lets you move freely around the world without moving your player.");
+    public FreecamV2() {
+        super(GlazedAddon.CATEGORY, "FreecamV2", "Lets you move freely around the world without moving your player.");
     }
 
     @Override
