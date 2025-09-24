@@ -55,6 +55,11 @@ public class TunnelBaseFinder extends Module {
     private Direction currentDirection;
     private int spawnerCount;
 
+    // Detour state
+    private boolean avoidingHazard = false;
+    private Direction savedDirection;
+    private int detourBlocksRemaining = 0;
+
     // Y limits for tunneling
     private final int minY = -64;
     private final int maxY = 0;
@@ -67,6 +72,8 @@ public class TunnelBaseFinder extends Module {
     public void onActivate() {
         currentDirection = getInitialDirection();
         spawnerCount = 0;
+        avoidingHazard = false;
+        detourBlocksRemaining = 0;
     }
 
     @Override
@@ -92,11 +99,26 @@ public class TunnelBaseFinder extends Module {
                 GameOptions options = mc.options;
                 options.forwardKey.setPressed(true);
 
-                // Check for hazards before mining forward
-                if (!detectHazards()) {
-                    mineForward();
+                if (avoidingHazard) {
+                    if (detourBlocksRemaining > 0) {
+                        mineForward();
+                        detourBlocksRemaining--;
+                    } else {
+                        // Finished detour -> restore original direction
+                        currentDirection = savedDirection;
+                        avoidingHazard = false;
+                    }
                 } else {
-                    options.forwardKey.setPressed(false); // stop if hazard
+                    if (!detectHazards()) {
+                        mineForward();
+                    } else {
+                        // Start detour
+                        savedDirection = currentDirection;
+                        currentDirection = turnLeft(savedDirection); // you can swap to turnRight() or random
+                        detourBlocksRemaining = 10;
+                        avoidingHazard = true;
+                        info("Detouring around hazard for 10 blocks...");
+                    }
                 }
             } else {
                 mc.options.forwardKey.setPressed(false);
@@ -239,6 +261,24 @@ public class TunnelBaseFinder extends Module {
 
     public boolean isDigging() {
         return false;
+    }
+
+    private Direction turnLeft(Direction dir) {
+        return switch (dir) {
+            case NORTH -> Direction.WEST;
+            case WEST  -> Direction.SOUTH;
+            case SOUTH -> Direction.EAST;
+            case EAST  -> Direction.NORTH;
+        };
+    }
+
+    private Direction turnRight(Direction dir) {
+        return switch (dir) {
+            case NORTH -> Direction.EAST;
+            case EAST  -> Direction.SOUTH;
+            case SOUTH -> Direction.WEST;
+            case WEST  -> Direction.NORTH;
+        };
     }
 
     enum Direction {
