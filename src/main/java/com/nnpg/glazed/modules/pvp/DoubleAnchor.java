@@ -7,6 +7,7 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.Blocks;
 import net.minecraft.item.Items;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -60,10 +61,10 @@ public class DoubleAnchor extends Module {
         // Auto place respawn anchor
         if (autoPlace.get()) {
             if (mc.world.getBlockState(targetPos).isAir()) {
-                int anchorSlot = InvUtils.findItemInHotbar(Items.RESPAWN_ANCHOR);
-                if (anchorSlot != -1) {
+                var anchor = InvUtils.findInHotbar(Items.RESPAWN_ANCHOR);
+                if (anchor.found()) {
                     int prevSlot = mc.player.getInventory().selectedSlot;
-                    InvUtils.swap(anchorSlot, true);
+                    InvUtils.swap(anchor.slot(), true);
 
                     placeBlock(targetPos);
                     InvUtils.swap(prevSlot, true);
@@ -73,11 +74,11 @@ public class DoubleAnchor extends Module {
 
         // Auto charge with glowstone
         if (autoCharge.get()) {
-            if (mc.world.getBlockState(targetPos).getBlock() == Items.RESPAWN_ANCHOR) {
-                int glowSlot = InvUtils.findItemInHotbar(Items.GLOWSTONE);
-                if (glowSlot != -1) {
+            if (mc.world.getBlockState(targetPos).getBlock() == Blocks.RESPAWN_ANCHOR) {
+                var glow = InvUtils.findInHotbar(Items.GLOWSTONE);
+                if (glow.found()) {
                     int prevSlot = mc.player.getInventory().selectedSlot;
-                    InvUtils.swap(glowSlot, true);
+                    InvUtils.swap(glow.slot(), true);
 
                     interactBlock(targetPos);
                     InvUtils.swap(prevSlot, true);
@@ -104,4 +105,3 @@ public class DoubleAnchor extends Module {
         });
     }
 }
-
