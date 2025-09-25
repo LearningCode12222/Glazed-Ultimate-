@@ -311,7 +311,14 @@ public class TunnelBaseFinder extends Module {
                     if (detectFurnaces.get() && be instanceof FurnaceBlockEntity) color = furnaceColor.get();
                     if (detectShulkers.get() && be instanceof ShulkerBoxBlockEntity) color = shulkerColor.get();
                     if (detectRedstone.get() && be instanceof PistonBlockEntity) color = pistonColor.get();
-                    if (detectRedstone.get() && be instanceof ObserverBlockEntity) color = observerColor.get();
+
+                    // ✅ Fix: Observers are blocks, not block entities
+                    if (detectRedstone.get()) {
+                        BlockState state = mc.world.getBlockState(pos);
+                        if (state.getBlock() == Blocks.OBSERVER) {
+                            color = observerColor.get();
+                        }
+                    }
 
                     if (color != null) {
                         storage++;
