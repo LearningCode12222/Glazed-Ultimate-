@@ -46,15 +46,6 @@ public class TunnelBaseFinder extends Module {
         .build()
     );
 
-    private final Setting<Integer> detourLength = sgGeneral.add(new IntSetting.Builder()
-        .name("detour-length")
-        .description("How many blocks to dig during hazard detour.")
-        .defaultValue(30)
-        .min(5)
-        .sliderMax(100)
-        .build()
-    );
-
     private final Setting<Integer> rotationSpeed = sgGeneral.add(new IntSetting.Builder()
         .name("rotation-speed")
         .description("How fast yaw turns per tick (degrees).")
@@ -81,7 +72,7 @@ public class TunnelBaseFinder extends Module {
     private final Setting<Boolean> detectFurnaces = sgDetect.add(new BoolSetting.Builder().name("detect-furnaces").defaultValue(false).build());
     private final Setting<Boolean> detectRedstone = sgDetect.add(new BoolSetting.Builder().name("detect-redstone").defaultValue(false).build());
 
-    // ✅ Rotated Deepslate Detection
+    // Rotated Deepslate Detection
     private final Setting<Boolean> detectRotatedDeepslate = sgDetect.add(new BoolSetting.Builder()
         .name("detect-rotated-deepslate")
         .description("Detect rotated deepslate pillars, stairs, and slabs.")
@@ -101,16 +92,19 @@ public class TunnelBaseFinder extends Module {
     private final Setting<SettingColor> rotatedDeepslateColor = sgRender.add(new ColorSetting.Builder().name("rotated-deepslate-color").defaultValue(new SettingColor(120, 120, 120, 120)).build());
     private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder().name("esp-outline").defaultValue(true).build());
 
-    // State
+    // State (detour removed)
     private FacingDirection currentDirection;
-    private FacingDirection savedDirection;
-    private boolean avoidingHazard = false;
-    private int detourBlocksRemaining = 0;
     private float targetYaw;
     private int rotationCooldownTicks = 0;
+    private boolean rotatingAvoidance = false;
+    private FacingDirection avoidDirection = null;
+
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
     private final int minY = -64;
     private final int maxY = 0;
+
+    // Hazard scan distance (15 blocks as requested)
+    private static final int HAZARD_SCAN_DISTANCE = 15;
 
     public TunnelBaseFinder() {
         super(GlazedAddon.CATEGORY, "TunnelBaseFinder", "Finds tunnel bases with ESP, rotated deepslate, and smart hazard detection.");
@@ -120,9 +114,9 @@ public class TunnelBaseFinder extends Module {
     public void onActivate() {
         currentDirection = getInitialDirection();
         targetYaw = mc.player.getYaw();
-        avoidingHazard = false;
-        detourBlocksRemaining = 0;
         rotationCooldownTicks = 0;
+        rotatingAvoidance = false;
+        avoidDirection = null;
         detectedBlocks.clear();
     }
 
@@ -139,89 +133,130 @@ public class TunnelBaseFinder extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null || currentDirection == null) return;
 
+        // keep pitch fixed
         mc.player.setPitch(2.0f);
+
+        // Smoothly move yaw toward targetYaw
         updateYaw();
 
+        // If we're currently rotating to avoid, just wait for rotation to finish
         if (rotationCooldownTicks > 0) {
+            // ensure we aren't moving/miming while rotating
             mc.options.forwardKey.setPressed(false);
+            mc.options.leftKey.setPressed(false);
+            mc.options.rightKey.setPressed(false);
+
             rotationCooldownTicks--;
-            if (rotationCooldownTicks == 0 && autoWalkMine.get()) {
-                mc.options.forwardKey.setPressed(true);
-                mineForward();
+            if (rotationCooldownTicks == 0) {
+                // finished rotation: resume walking and mining
+                rotatingAvoidance = false;
+                avoidDirection = null;
+                if (autoWalkMine.get()) {
+                    mc.options.forwardKey.setPressed(true);
+                    mineForward();
+                }
             }
             return;
         }
 
+        // Only auto-walk & mine when player is in allowed Y range
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
-                if (avoidingHazard) {
-                    mc.options.forwardKey.setPressed(true);
-                    if (isBlockInFront()) {
-                        mc.options.forwardKey.setPressed(false);
-                        avoidingHazard = false;
-                        savedDirection = currentDirection;
-                        FacingDirection left = turnLeft(savedDirection);
-                        FacingDirection right = turnRight(savedDirection);
-                        if (isSafeDirection(left)) {
-                            currentDirection = left;
-                            targetYaw = mc.player.getYaw() - 90f;
-                            info("Hazard: Turning LEFT (safe)");
-                        } else if (isSafeDirection(right)) {
-                            currentDirection = right;
-                            targetYaw = mc.player.getYaw() + 90f;
-                            info("Hazard: Turning RIGHT (safe)");
-                        } else {
-                            warning("No safe direction, stopping!");
-                            mc.options.forwardKey.setPressed(false);
-                            return;
-                        }
-                        rotationCooldownTicks = 30;
-                        detourBlocksRemaining = detourLength.get();
-                    }
-                } else {
-                    mc.options.forwardKey.setPressed(true);
-                    if (!detectHazards()) {
-                        mineForward();
+                // Check for hazard ahead (scan HAZARD_SCAN_DISTANCE)
+                if (hazardInFront(HAZARD_SCAN_DISTANCE)) {
+                    // Stop moving/mining and perform a single 90° rotation to a safe side
+                    mc.options.forwardKey.setPressed(false);
+
+                    FacingDirection left = turnLeft(currentDirection);
+                    FacingDirection right = turnRight(currentDirection);
+
+                    boolean leftSafe = isSafeDirection(left, HAZARD_SCAN_DISTANCE);
+                    boolean rightSafe = isSafeDirection(right, HAZARD_SCAN_DISTANCE);
+
+                    if (leftSafe && !rightSafe) {
+                        // choose left
+                        avoidDirection = left;
+                        currentDirection = left;
+                        targetYaw = mc.player.getYaw() - 90f;
+                    } else if (!leftSafe && rightSafe) {
+                        // choose right
+                        avoidDirection = right;
+                        currentDirection = right;
+                        targetYaw = mc.player.getYaw() + 90f;
+                    } else if (leftSafe) {
+                        // both safe -> prefer left
+                        avoidDirection = left;
+                        currentDirection = left;
+                        targetYaw = mc.player.getYaw() - 90f;
+                    } else if (rightSafe) {
+                        avoidDirection = right;
+                        currentDirection = right;
+                        targetYaw = mc.player.getYaw() + 90f;
                     } else {
-                        avoidingHazard = true;
-                        info("Hazard detected! Walking until bump...");
+                        // no safe side: stop and do not move
+                        warning("Hazard ahead and no safe side within " + HAZARD_SCAN_DISTANCE + " blocks — stopping.");
+                        mc.options.forwardKey.setPressed(false);
+                        return;
                     }
+
+                    // start rotation cooldown so updateYaw has time to move player yaw
+                    rotatingAvoidance = true;
+                    // ticks to rotate: compute approximate ticks needed based on rotationSpeed
+                    float step = Math.max(1f, rotationSpeed.get());
+                    // 90 degrees divided by step -> ticks; add a small buffer
+                    rotationCooldownTicks = Math.max(2, (int) Math.ceil(90.0f / step) + 2);
+                    return;
+                } else {
+                    // no hazard -> walk and mine
+                    mc.options.forwardKey.setPressed(true);
+                    mineForward();
                 }
-            } else mc.options.forwardKey.setPressed(false);
+            } else {
+                mc.options.forwardKey.setPressed(false);
+            }
         }
 
+        // regularly update ESP / detectors
         notifyFound();
     }
 
-    private boolean isBlockInFront() {
+    // Scan ahead up to 'distance' blocks for hazards (front column)
+    private boolean hazardInFront(int distance) {
         BlockPos playerPos = mc.player.getBlockPos();
-        BlockPos target = playerPos.offset(currentDirection.toMcDirection());
-        BlockState state = mc.world.getBlockState(target);
-        return !state.isAir() && state.getBlock() != Blocks.BEDROCK;
-    }
 
-    @EventHandler
-    private void onRender(Render3DEvent event) {
-        detectedBlocks.forEach((pos, color) -> {
-            event.renderer.box(pos, color, color, ShapeMode.Both, 0);
-        });
-    }
+        for (int i = 1; i <= distance; i++) {
+            BlockPos forward = playerPos.offset(currentDirection.toMcDirection(), i);
+            BlockState bs = mc.world.getBlockState(forward);
+            if (isHazard(bs)) return true;
 
-    @EventHandler
-    private void onPacketReceive(PacketEvent.Receive event) {
-        if (event.packet instanceof EntityStatusS2CPacket packet) {
-            if (packet.getStatus() == 35 && packet.getEntity(mc.world) == mc.player) {
-                disconnectWithMessage(Text.of("Totem Popped"));
-                toggle();
-            }
+            // also check above the forward block (falling liquids/gravel/sand above)
+            BlockState above = mc.world.getBlockState(forward.up());
+            if (isHazard(above)) return true;
         }
+        return false;
+    }
+
+    // Check if a given side direction is free of hazards within 'distance' blocks
+    private boolean isSafeDirection(FacingDirection dir, int distance) {
+        BlockPos playerPos = mc.player.getBlockPos();
+        for (int i = 1; i <= distance; i++) {
+            BlockPos side = playerPos.offset(dir.toMcDirection(), i);
+            BlockState bs = mc.world.getBlockState(side);
+            if (isHazard(bs)) return false;
+            BlockState above = mc.world.getBlockState(side.up());
+            if (isHazard(above)) return false;
+        }
+        return true;
     }
 
     private void updateYaw() {
         float currentYaw = mc.player.getYaw();
         float delta = targetYaw - currentYaw;
+
+        // normalize delta to [-180, 180]
         delta = ((delta + 180) % 360 + 360) % 360 - 180;
+
         float step = rotationSpeed.get();
         if (Math.abs(delta) <= step) mc.player.setYaw(targetYaw);
         else mc.player.setYaw(currentYaw + Math.signum(delta) * step);
@@ -236,18 +271,19 @@ public class TunnelBaseFinder extends Module {
         return FacingDirection.SOUTH;
     }
 
-    // ✅ Mining forward with block state respect
+    // Mining forward — quick, safe and unchanged
     private void mineForward() {
         if (mc.player == null || mc.interactionManager == null || mc.world == null) return;
         HitResult hit = mc.player.raycast(5.0, 0.0f, false);
         if (!(hit instanceof BlockHitResult bhr)) return;
+
         BlockPos target = bhr.getBlockPos();
         BlockState state = mc.world.getBlockState(target);
         if (state.isAir() || state.getBlock() == Blocks.BEDROCK) return;
 
-        // ✅ Special rotated deepslate handling
         if (detectRotatedDeepslate.get() && isRotatedDeepslate(state)) {
-            info("Rotated Deepslate found, mining block: " + state.getBlock().getName().getString());
+            // lightweight log to notify (optional)
+            info("Rotated Deepslate found at " + target.toShortString());
         }
 
         if (mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide())) {
@@ -255,49 +291,35 @@ public class TunnelBaseFinder extends Module {
         }
     }
 
-    // ✅ Check for rotated deepslate variants
     private boolean isRotatedDeepslate(BlockState state) {
+        if (state == null) return false;
         Block b = state.getBlock();
-        return (b instanceof PillarBlock || b instanceof StairsBlock || b instanceof SlabBlock) && b.getTranslationKey().contains("deepslate");
+        String key = b.getTranslationKey().toLowerCase(Locale.ROOT);
+        if (!key.contains("deepslate")) return false;
+        if (state.contains(net.minecraft.state.property.Properties.AXIS)) {
+            Direction.Axis axis = state.get(net.minecraft.state.property.Properties.AXIS);
+            return axis != Direction.Axis.Y;
+        }
+        if (state.contains(net.minecraft.state.property.Properties.HORIZONTAL_FACING)) return true;
+        if (state.contains(net.minecraft.state.property.Properties.FACING)) return true;
+        return (b instanceof PillarBlock) || (b instanceof StairsBlock) || (b instanceof SlabBlock);
     }
 
-    // ✅ Hazard detection
-    private boolean detectHazards() {
-        BlockPos playerPos = mc.player.getBlockPos();
-
-        for (int i = 1; i <= 3; i++) {
-            BlockState state = mc.world.getBlockState(playerPos.up(i));
-            if (isHazard(state)) {
-                warning("Hazard above: " + state.getBlock().getName().getString());
-                return true;
-            }
-        }
-
-        for (int i = 1; i <= 3; i++) {
-            BlockPos front = playerPos.offset(currentDirection.toMcDirection(), i);
-            BlockState state = mc.world.getBlockState(front);
-            if (isHazard(state)) {
-                warning("Hazard in front: " + state.getBlock().getName().getString());
-                return true;
-            }
-        }
-
-        return false;
-    }
-
+    // detect hazards: lava, water, gravel, sand, powder_snow
     private boolean isHazard(BlockState state) {
+        if (state == null) return false;
         Block b = state.getBlock();
         return b == Blocks.LAVA || b == Blocks.WATER || b == Blocks.GRAVEL || b == Blocks.SAND || b == Blocks.POWDER_SNOW;
     }
 
-    private boolean isSafeDirection(FacingDirection dir) {
-        BlockPos playerPos = mc.player.getBlockPos();
-        for (int i = 1; i <= 3; i++) {
-            BlockPos side = playerPos.offset(dir.toMcDirection(), i);
-            BlockState state = mc.world.getBlockState(side);
-            if (isHazard(state)) return false;
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (event.packet instanceof EntityStatusS2CPacket packet) {
+            if (packet.getStatus() == 35 && packet.getEntity(mc.world) == mc.player) {
+                disconnectWithMessage(Text.of("Totem Popped"));
+                toggle();
+            }
         }
-        return true;
     }
 
     private void notifyFound() {
@@ -339,16 +361,14 @@ public class TunnelBaseFinder extends Module {
                     }
                 }
 
-                // ✅ Scan for rotated deepslate
+                // lightweight rotated deepslate scan near player Y (±10)
                 if (detectRotatedDeepslate.get()) {
                     for (BlockPos pos : BlockPos.iterate(
                         chunk.getPos().getStartX(), mc.player.getBlockY() - 10, chunk.getPos().getStartZ(),
                         chunk.getPos().getEndX(), mc.player.getBlockY() + 10, chunk.getPos().getEndZ()
                     )) {
                         BlockState state = mc.world.getBlockState(pos);
-                        if (isRotatedDeepslate(state)) {
-                            detectedBlocks.put(pos, rotatedDeepslateColor.get());
-                        }
+                        if (isRotatedDeepslate(state)) detectedBlocks.put(pos, rotatedDeepslateColor.get());
                     }
                 }
             }
@@ -358,6 +378,11 @@ public class TunnelBaseFinder extends Module {
             Vec3d p = mc.player.getPos();
             notifyFound("Base found", (int) p.x, (int) p.y, (int) p.z);
         }
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        detectedBlocks.forEach((pos, color) -> event.renderer.box(pos, color, color, ShapeMode.Both, 0));
     }
 
     private void notifyFound(String msg, int x, int y, int z) {
