@@ -1,9 +1,9 @@
 package com.nnpg.glazed.modules.main;
 
 import com.nnpg.glazed.GlazedAddon;
-import meteordevelopment.meteorclient.events.entity.TotemPopEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -14,7 +14,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.*;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
@@ -209,12 +209,14 @@ public class TunnelBaseFinder extends Module {
         });
     }
 
-    // NEW: Totem Pop handling
+    // ✅ NEW Totem Pop handling using packet
     @EventHandler
-    private void onTotemPop(TotemPopEvent event) {
-        if (mc.player != null && event.entity instanceof PlayerEntity player && player.equals(mc.player)) {
-            disconnectWithMessage(Text.of("Totem Popped"));
-            toggle();
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (event.packet instanceof EntityStatusS2CPacket packet) {
+            if (packet.getStatus() == 35 && packet.getEntity(mc.world) == mc.player) {
+                disconnectWithMessage(Text.of("Totem Popped"));
+                toggle();
+            }
         }
     }
 
