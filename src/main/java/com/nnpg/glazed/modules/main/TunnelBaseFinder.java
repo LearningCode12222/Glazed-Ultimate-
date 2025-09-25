@@ -209,7 +209,7 @@ public class TunnelBaseFinder extends Module {
         });
     }
 
-    // ✅ NEW Totem Pop handling using packet
+    // ✅ Totem Pop handling using packet
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
         if (event.packet instanceof EntityStatusS2CPacket packet) {
@@ -253,8 +253,9 @@ public class TunnelBaseFinder extends Module {
         };
     }
 
+    // ✅ Fixed mining (works on servers, normal speed)
     private void mineForward() {
-        if (mc.player == null) return;
+        if (mc.player == null || mc.interactionManager == null || mc.world == null) return;
 
         BlockPos playerPos = mc.player.getBlockPos();
         BlockPos target = switch (currentDirection) {
@@ -264,11 +265,13 @@ public class TunnelBaseFinder extends Module {
             case WEST -> playerPos.west();
         };
 
-        if (mc.world == null || mc.interactionManager == null) return;
-
         BlockState state = mc.world.getBlockState(target);
-        if (!state.isAir() && state.getBlock() != Blocks.BEDROCK) {
-            mc.interactionManager.attackBlock(target, currentDirection.toMcDirection());
+        if (state.isAir() || state.getBlock() == Blocks.BEDROCK) return;
+
+        // Tell server we are mining this block
+        boolean mining = mc.interactionManager.updateBlockBreakingProgress(target, currentDirection.toMcDirection());
+
+        if (mining) {
             mc.player.swingHand(Hand.MAIN_HAND);
         }
     }
