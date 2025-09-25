@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
@@ -15,7 +16,9 @@ import net.minecraft.client.option.GameOptions;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.chunk.ChunkStatus;
@@ -70,9 +73,9 @@ public class TunnelBaseFinder extends Module {
     private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder().name("esp-outline").defaultValue(true).build());
 
     // State
-    private Direction currentDirection;
+    private FacingDirection currentDirection;
     private boolean avoidingHazard = false;
-    private Direction savedDirection;
+    private FacingDirection savedDirection;
     private int detourBlocksRemaining = 0;
 
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
@@ -131,9 +134,11 @@ public class TunnelBaseFinder extends Module {
                         // Random left or right turn
                         if (random.nextBoolean()) {
                             currentDirection = turnLeft(savedDirection);
+                            mc.player.setYaw(mc.player.getYaw() - 90f);
                             info("Hazard detected! Turning LEFT 90°");
                         } else {
                             currentDirection = turnRight(savedDirection);
+                            mc.player.setYaw(mc.player.getYaw() + 90f);
                             info("Hazard detected! Turning RIGHT 90°");
                         }
 
@@ -156,14 +161,14 @@ public class TunnelBaseFinder extends Module {
         });
     }
 
-    private Direction getInitialDirection() {
+    private FacingDirection getInitialDirection() {
         float yaw = mc.player.getYaw() % 360.0f;
         if (yaw < 0.0f) yaw += 360.0f;
 
-        if (yaw >= 45.0f && yaw < 135.0f) return Direction.WEST;
-        if (yaw >= 135.0f && yaw < 225.0f) return Direction.NORTH;
-        if (yaw >= 225.0f && yaw < 315.0f) return Direction.EAST;
-        return Direction.SOUTH;
+        if (yaw >= 45.0f && yaw < 135.0f) return FacingDirection.WEST;
+        if (yaw >= 135.0f && yaw < 225.0f) return FacingDirection.NORTH;
+        if (yaw >= 225.0f && yaw < 315.0f) return FacingDirection.EAST;
+        return FacingDirection.SOUTH;
     }
 
     private void mineForward() {
@@ -181,18 +186,9 @@ public class TunnelBaseFinder extends Module {
 
         BlockState state = mc.world.getBlockState(target);
         if (!state.isAir() && state.getBlock() != Blocks.BEDROCK) {
-            mc.interactionManager.updateBlockBreakingProgress(target, currentDirectionToFacing());
-            mc.player.swingHand(mc.player.getActiveHand());
+            mc.interactionManager.attackBlock(target, currentDirection.toMcDirection());
+            mc.player.swingHand(Hand.MAIN_HAND);
         }
-    }
-
-    private net.minecraft.util.math.Direction currentDirectionToFacing() {
-        return switch (currentDirection) {
-            case NORTH -> net.minecraft.util.math.Direction.NORTH;
-            case SOUTH -> net.minecraft.util.math.Direction.SOUTH;
-            case EAST -> net.minecraft.util.math.Direction.EAST;
-            case WEST -> net.minecraft.util.math.Direction.WEST;
-        };
     }
 
     private boolean detectHazards() {
@@ -274,25 +270,34 @@ public class TunnelBaseFinder extends Module {
         }
     }
 
-    private Direction turnLeft(Direction dir) {
+    private FacingDirection turnLeft(FacingDirection dir) {
         return switch (dir) {
-            case NORTH -> Direction.WEST;
-            case WEST -> Direction.SOUTH;
-            case SOUTH -> Direction.EAST;
-            case EAST -> Direction.NORTH;
+            case NORTH -> FacingDirection.WEST;
+            case WEST -> FacingDirection.SOUTH;
+            case SOUTH -> FacingDirection.EAST;
+            case EAST -> FacingDirection.NORTH;
         };
     }
 
-    private Direction turnRight(Direction dir) {
+    private FacingDirection turnRight(FacingDirection dir) {
         return switch (dir) {
-            case NORTH -> Direction.EAST;
-            case EAST -> Direction.SOUTH;
-            case SOUTH -> Direction.WEST;
-            case WEST -> Direction.NORTH;
+            case NORTH -> FacingDirection.EAST;
+            case EAST -> FacingDirection.SOUTH;
+            case SOUTH -> FacingDirection.WEST;
+            case WEST -> FacingDirection.NORTH;
         };
     }
 
-    enum Direction {
-        NORTH, SOUTH, EAST, WEST
+    enum FacingDirection {
+        NORTH, SOUTH, EAST, WEST;
+
+        public Direction toMcDirection() {
+            return switch (this) {
+                case NORTH -> Direction.NORTH;
+                case SOUTH -> Direction.SOUTH;
+                case EAST -> Direction.EAST;
+                case WEST -> Direction.WEST;
+            };
+        }
     }
 }
