@@ -97,6 +97,8 @@ public class TunnelBaseFinder extends Module {
     private int detourBlocksRemaining = 0;
 
     private float targetYaw;
+    private int rotationCooldownTicks = 0; // ticks to wait after turning before mining again
+
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
     private final Random random = new Random();
 
@@ -114,6 +116,7 @@ public class TunnelBaseFinder extends Module {
         avoidingHazard = false;
         returningToSavedDirection = false;
         detourBlocksRemaining = 0;
+        rotationCooldownTicks = 0;
         detectedBlocks.clear();
     }
 
@@ -133,6 +136,12 @@ public class TunnelBaseFinder extends Module {
         mc.player.setPitch(2.0f);
         updateYaw();
 
+        if (rotationCooldownTicks > 0) {
+            mc.options.forwardKey.setPressed(false);
+            rotationCooldownTicks--;
+            return; // wait out the cooldown
+        }
+
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
@@ -147,6 +156,7 @@ public class TunnelBaseFinder extends Module {
                         targetYaw = getYawForDirection(savedDirection);
                         currentDirection = savedDirection;
                         returningToSavedDirection = true;
+                        rotationCooldownTicks = 30; // wait 1.5s before returning
                         detourBlocksRemaining = detourLength.get();
                     } else {
                         if (detourBlocksRemaining > 0) {
@@ -171,9 +181,11 @@ public class TunnelBaseFinder extends Module {
                             targetYaw = mc.player.getYaw() + 90f;
                             info("Hazard detected! Smooth turning RIGHT");
                         }
+                        rotationCooldownTicks = 30; // wait 1.5s before mining again
                         detourBlocksRemaining = detourLength.get();
                         avoidingHazard = true;
                         returningToSavedDirection = false;
+                        mc.options.forwardKey.setPressed(false);
                     }
                 }
             } else {
