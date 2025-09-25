@@ -55,6 +55,16 @@ public class TunnelBaseFinder extends Module {
         .build()
     );
 
+    // How often to run the heavy scan (in ticks). 20 ticks ~= 1 second.
+    private final Setting<Integer> scanInterval = sgGeneral.add(new IntSetting.Builder()
+        .name("scan-interval")
+        .description("Ticks between heavy chunk scans (higher = less lag, updates less often).")
+        .defaultValue(20)
+        .min(10)
+        .sliderMax(120)
+        .build()
+    );
+
     // Detection
     private final Setting<Integer> baseThreshold = sgDetect.add(new IntSetting.Builder()
         .name("base-threshold")
@@ -106,6 +116,9 @@ public class TunnelBaseFinder extends Module {
     // Hazard scan distance (15 blocks as requested)
     private static final int HAZARD_SCAN_DISTANCE = 15;
 
+    // scan timer for heavy scans
+    private int scanTimer = 0;
+
     public TunnelBaseFinder() {
         super(GlazedAddon.CATEGORY, "TunnelBaseFinder", "Finds tunnel bases with ESP, rotated deepslate, and smart hazard detection.");
     }
@@ -118,6 +131,9 @@ public class TunnelBaseFinder extends Module {
         rotatingAvoidance = false;
         avoidDirection = null;
         detectedBlocks.clear();
+        scanTimer = 0;
+        // do an immediate scan so ESP shows up quick
+        notifyFound();
     }
 
     @Override
@@ -141,7 +157,7 @@ public class TunnelBaseFinder extends Module {
 
         // If we're currently rotating to avoid, just wait for rotation to finish
         if (rotationCooldownTicks > 0) {
-            // ensure we aren't moving/miming while rotating
+            // ensure we aren't moving/mining while rotating
             mc.options.forwardKey.setPressed(false);
             mc.options.leftKey.setPressed(false);
             mc.options.rightKey.setPressed(false);
@@ -212,13 +228,14 @@ public class TunnelBaseFinder extends Module {
                     mc.options.forwardKey.setPressed(true);
                     mineForward();
                 }
-            } else {
-                mc.options.forwardKey.setPressed(false);
-            }
+            } else mc.options.forwardKey.setPressed(false);
         }
 
-        // regularly update ESP / detectors
-        notifyFound();
+        // Run the heavy scanning only every scanInterval ticks to reduce lag.
+        if (++scanTimer >= scanInterval.get()) {
+            scanTimer = 0;
+            notifyFound();
+        }
     }
 
     // Scan ahead up to 'distance' blocks for hazards (front column)
