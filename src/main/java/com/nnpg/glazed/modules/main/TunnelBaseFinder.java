@@ -140,6 +140,11 @@ public class TunnelBaseFinder extends Module {
         if (rotationCooldownTicks > 0) {
             mc.options.forwardKey.setPressed(false);
             rotationCooldownTicks--;
+            // ✅ When rotation ends, resume walking + mining
+            if (rotationCooldownTicks == 0 && autoWalkMine.get()) {
+                mc.options.forwardKey.setPressed(true);
+                mineForward();
+            }
             return;
         }
 
@@ -263,10 +268,11 @@ public class TunnelBaseFinder extends Module {
         }
     }
 
-    // ✅ Hazards only check for lava + water now
+    // ✅ Hazards only check at/below player level (no water/lava above)
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
+            if (pos.getY() > playerPos.getY()) continue; // ignore above player
             BlockState state = mc.world.getBlockState(pos);
             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
                 warning("Hazard: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
