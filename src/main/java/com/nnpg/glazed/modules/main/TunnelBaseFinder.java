@@ -13,7 +13,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.*;
 import net.minecraft.client.option.GameOptions;
-import net.minecraft.entity.ItemEntity;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
@@ -264,6 +263,7 @@ public class TunnelBaseFinder extends Module {
         }
     }
 
+    // ✅ Hazards only check for lava + water now
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
@@ -273,13 +273,6 @@ public class TunnelBaseFinder extends Module {
                 return true;
             }
         }
-
-        List<ItemEntity> items = mc.world.getEntitiesByClass(ItemEntity.class, mc.player.getBoundingBox().expand(10), e -> true);
-        if (!items.isEmpty()) {
-            warning("Dropped items detected nearby!");
-            return true;
-        }
-
         return false;
     }
 
