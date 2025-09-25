@@ -9,6 +9,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.*;
@@ -89,19 +90,18 @@ public class TunnelBaseFinder extends Module {
     private final Setting<SettingColor> spawnerColor = sgRender.add(new ColorSetting.Builder().name("spawner-color").defaultValue(new SettingColor(0, 0, 255, 80)).build());
     private final Setting<SettingColor> furnaceColor = sgRender.add(new ColorSetting.Builder().name("furnace-color").defaultValue(new SettingColor(128, 128, 128, 80)).build());
     private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder().name("redstone-color").defaultValue(new SettingColor(255, 0, 0, 80)).build());
+    private final Setting<SettingColor> pistonColor = sgRender.add(new ColorSetting.Builder().name("piston-color").defaultValue(new SettingColor(200, 200, 200, 80)).build());
+    private final Setting<SettingColor> observerColor = sgRender.add(new ColorSetting.Builder().name("observer-color").defaultValue(new SettingColor(100, 100, 100, 80)).build());
     private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder().name("esp-outline").defaultValue(true).build());
 
     // State
     private FacingDirection currentDirection;
     private FacingDirection savedDirection;
     private boolean avoidingHazard = false;
-    private boolean walkingIntoBlock = false;
-    private boolean returningToSavedDirection = false;
     private int detourBlocksRemaining = 0;
     private float targetYaw;
     private int rotationCooldownTicks = 0;
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
-    private final Random random = new Random();
     private final int minY = -64;
     private final int maxY = 0;
 
@@ -114,8 +114,6 @@ public class TunnelBaseFinder extends Module {
         currentDirection = getInitialDirection();
         targetYaw = mc.player.getYaw();
         avoidingHazard = false;
-        walkingIntoBlock = false;
-        returningToSavedDirection = false;
         detourBlocksRemaining = 0;
         rotationCooldownTicks = 0;
         detectedBlocks.clear();
@@ -140,7 +138,6 @@ public class TunnelBaseFinder extends Module {
         if (rotationCooldownTicks > 0) {
             mc.options.forwardKey.setPressed(false);
             rotationCooldownTicks--;
-            // ✅ When rotation ends, resume walking + mining
             if (rotationCooldownTicks == 0 && autoWalkMine.get()) {
                 mc.options.forwardKey.setPressed(true);
                 mineForward();
@@ -156,20 +153,25 @@ public class TunnelBaseFinder extends Module {
                     if (isBlockInFront()) {
                         mc.options.forwardKey.setPressed(false);
                         avoidingHazard = false;
-                        walkingIntoBlock = false;
                         savedDirection = currentDirection;
-                        if (random.nextBoolean()) {
-                            currentDirection = turnLeft(savedDirection);
+                        // ✅ choose safe side
+                        FacingDirection left = turnLeft(savedDirection);
+                        FacingDirection right = turnRight(savedDirection);
+                        if (isSafeDirection(left)) {
+                            currentDirection = left;
                             targetYaw = mc.player.getYaw() - 90f;
-                            info("Hazard: Turning LEFT after bump");
-                        } else {
-                            currentDirection = turnRight(savedDirection);
+                            info("Hazard: Turning LEFT (safe)");
+                        } else if (isSafeDirection(right)) {
+                            currentDirection = right;
                             targetYaw = mc.player.getYaw() + 90f;
-                            info("Hazard: Turning RIGHT after bump");
+                            info("Hazard: Turning RIGHT (safe)");
+                        } else {
+                            warning("No safe direction, stopping!");
+                            mc.options.forwardKey.setPressed(false);
+                            return;
                         }
                         rotationCooldownTicks = 30;
                         detourBlocksRemaining = detourLength.get();
-                        returningToSavedDirection = false;
                     }
                 } else {
                     mc.options.forwardKey.setPressed(true);
@@ -177,13 +179,10 @@ public class TunnelBaseFinder extends Module {
                         mineForward();
                     } else {
                         avoidingHazard = true;
-                        walkingIntoBlock = true;
                         info("Hazard detected! Walking until bump...");
                     }
                 }
-            } else {
-                mc.options.forwardKey.setPressed(false);
-            }
+            } else mc.options.forwardKey.setPressed(false);
         }
 
         notifyFound();
@@ -191,12 +190,7 @@ public class TunnelBaseFinder extends Module {
 
     private boolean isBlockInFront() {
         BlockPos playerPos = mc.player.getBlockPos();
-        BlockPos target = switch (currentDirection) {
-            case NORTH -> playerPos.north();
-            case SOUTH -> playerPos.south();
-            case EAST -> playerPos.east();
-            case WEST -> playerPos.west();
-        };
+        BlockPos target = playerPos.offset(currentDirection.toMcDirection());
         BlockState state = mc.world.getBlockState(target);
         return !state.isAir() && state.getBlock() != Blocks.BEDROCK;
     }
@@ -208,7 +202,6 @@ public class TunnelBaseFinder extends Module {
         });
     }
 
-    // ✅ Totem Pop handling using packet
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
         if (event.packet instanceof EntityStatusS2CPacket packet) {
@@ -224,11 +217,8 @@ public class TunnelBaseFinder extends Module {
         float delta = targetYaw - currentYaw;
         delta = ((delta + 180) % 360 + 360) % 360 - 180;
         float step = rotationSpeed.get();
-        if (Math.abs(delta) <= step) {
-            mc.player.setYaw(targetYaw);
-        } else {
-            mc.player.setYaw(currentYaw + Math.signum(delta) * step);
-        }
+        if (Math.abs(delta) <= step) mc.player.setYaw(targetYaw);
+        else mc.player.setYaw(currentYaw + Math.signum(delta) * step);
     }
 
     private FacingDirection getInitialDirection() {
@@ -240,46 +230,58 @@ public class TunnelBaseFinder extends Module {
         return FacingDirection.SOUTH;
     }
 
-    private float getYawForDirection(FacingDirection dir) {
-        return switch (dir) {
-            case NORTH -> 180f;
-            case SOUTH -> 0f;
-            case WEST -> 90f;
-            case EAST -> -90f;
-        };
-    }
-
-    // ✅ Fixed mining (now mines the block you're looking at, works on servers)
+    // ✅ Mining with server compatibility
     private void mineForward() {
         if (mc.player == null || mc.interactionManager == null || mc.world == null) return;
-
         HitResult hit = mc.player.raycast(5.0, 0.0f, false);
-        if (hit == null || hit.getType() != HitResult.Type.BLOCK) return;
-
-        BlockHitResult bhr = (BlockHitResult) hit;
+        if (!(hit instanceof BlockHitResult bhr)) return;
         BlockPos target = bhr.getBlockPos();
         BlockState state = mc.world.getBlockState(target);
-
         if (state.isAir() || state.getBlock() == Blocks.BEDROCK) return;
-
-        boolean mining = mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide());
-        if (mining) {
+        if (mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide())) {
             mc.player.swingHand(Hand.MAIN_HAND);
         }
     }
 
-    // ✅ Hazards only check at/below player level (no water/lava above)
+    // ✅ Hazard detection (lava/water above, gravel in front, sides scan)
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
-        for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
-            if (pos.getY() > playerPos.getY()) continue; // ignore above player
-            BlockState state = mc.world.getBlockState(pos);
-            if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
-                warning("Hazard: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
+
+        // check 2 blocks above
+        for (int i = 1; i <= 2; i++) {
+            BlockState state = mc.world.getBlockState(playerPos.up(i));
+            if (isLiquidOrGravel(state)) {
+                warning("Hazard above: " + state.getBlock().getName().getString());
                 return true;
             }
         }
+
+        // check 2 blocks forward
+        for (int i = 1; i <= 2; i++) {
+            BlockPos front = playerPos.offset(currentDirection.toMcDirection(), i);
+            BlockState state = mc.world.getBlockState(front);
+            if (isLiquidOrGravel(state)) {
+                warning("Hazard in front: " + state.getBlock().getName().getString());
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private boolean isLiquidOrGravel(BlockState state) {
+        Block b = state.getBlock();
+        return b == Blocks.LAVA || b == Blocks.WATER || b == Blocks.GRAVEL;
+    }
+
+    private boolean isSafeDirection(FacingDirection dir) {
+        BlockPos playerPos = mc.player.getBlockPos();
+        for (int i = 1; i <= 2; i++) {
+            BlockPos side = playerPos.offset(dir.toMcDirection(), i);
+            BlockState state = mc.world.getBlockState(side);
+            if (isLiquidOrGravel(state)) return false;
+        }
+        return true;
     }
 
     private void notifyFound() {
@@ -308,7 +310,8 @@ public class TunnelBaseFinder extends Module {
                     if (detectBarrels.get() && be instanceof BarrelBlockEntity) color = barrelColor.get();
                     if (detectFurnaces.get() && be instanceof FurnaceBlockEntity) color = furnaceColor.get();
                     if (detectShulkers.get() && be instanceof ShulkerBoxBlockEntity) color = shulkerColor.get();
-                    if (detectRedstone.get() && be instanceof PistonBlockEntity) color = redstoneColor.get();
+                    if (detectRedstone.get() && be instanceof PistonBlockEntity) color = pistonColor.get();
+                    if (detectRedstone.get() && be instanceof ObserverBlockEntity) color = observerColor.get();
 
                     if (color != null) {
                         storage++;
@@ -359,7 +362,6 @@ public class TunnelBaseFinder extends Module {
 
     enum FacingDirection {
         NORTH, SOUTH, EAST, WEST;
-
         public Direction toMcDirection() {
             return switch (this) {
                 case NORTH -> Direction.NORTH;
