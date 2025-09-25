@@ -6,7 +6,6 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
@@ -45,6 +44,24 @@ public class TunnelBaseFinder extends Module {
         .build()
     );
 
+    private final Setting<Integer> detourLength = sgGeneral.add(new IntSetting.Builder()
+        .name("detour-length")
+        .description("How many blocks to dig during hazard detour.")
+        .defaultValue(30)
+        .min(5)
+        .sliderMax(100)
+        .build()
+    );
+
+    private final Setting<Integer> rotationSpeed = sgGeneral.add(new IntSetting.Builder()
+        .name("rotation-speed")
+        .description("How fast yaw turns per tick (degrees).")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(20)
+        .build()
+    );
+
     // Detection
     private final Setting<Integer> baseThreshold = sgDetect.add(new IntSetting.Builder()
         .name("base-threshold")
@@ -74,10 +91,12 @@ public class TunnelBaseFinder extends Module {
 
     // State
     private FacingDirection currentDirection;
-    private boolean avoidingHazard = false;
     private FacingDirection savedDirection;
+    private boolean avoidingHazard = false;
+    private boolean returningToSavedDirection = false;
     private int detourBlocksRemaining = 0;
 
+    private float targetYaw;
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
     private final Random random = new Random();
 
@@ -91,7 +110,9 @@ public class TunnelBaseFinder extends Module {
     @Override
     public void onActivate() {
         currentDirection = getInitialDirection();
+        targetYaw = mc.player.getYaw();
         avoidingHazard = false;
+        returningToSavedDirection = false;
         detourBlocksRemaining = 0;
         detectedBlocks.clear();
     }
@@ -110,40 +131,49 @@ public class TunnelBaseFinder extends Module {
         if (mc.player == null || mc.world == null || currentDirection == null) return;
 
         mc.player.setPitch(2.0f);
+        updateYaw();
 
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
-                GameOptions options = mc.options;
-                options.forwardKey.setPressed(true);
+                mc.options.forwardKey.setPressed(true);
 
                 if (avoidingHazard) {
                     if (detourBlocksRemaining > 0) {
                         mineForward();
                         detourBlocksRemaining--;
-                    } else {
+                    } else if (!returningToSavedDirection) {
+                        // Finished detour → return
+                        targetYaw = getYawForDirection(savedDirection);
                         currentDirection = savedDirection;
-                        avoidingHazard = false;
+                        returningToSavedDirection = true;
+                        detourBlocksRemaining = detourLength.get();
+                    } else {
+                        if (detourBlocksRemaining > 0) {
+                            mineForward();
+                            detourBlocksRemaining--;
+                        } else {
+                            avoidingHazard = false;
+                            returningToSavedDirection = false;
+                        }
                     }
                 } else {
                     if (!detectHazards()) {
                         mineForward();
                     } else {
                         savedDirection = currentDirection;
-
-                        // Random left or right turn
                         if (random.nextBoolean()) {
                             currentDirection = turnLeft(savedDirection);
-                            mc.player.setYaw(mc.player.getYaw() - 90f);
-                            info("Hazard detected! Turning LEFT 90°");
+                            targetYaw = mc.player.getYaw() - 90f;
+                            info("Hazard detected! Smooth turning LEFT");
                         } else {
                             currentDirection = turnRight(savedDirection);
-                            mc.player.setYaw(mc.player.getYaw() + 90f);
-                            info("Hazard detected! Turning RIGHT 90°");
+                            targetYaw = mc.player.getYaw() + 90f;
+                            info("Hazard detected! Smooth turning RIGHT");
                         }
-
-                        detourBlocksRemaining = 10;
+                        detourBlocksRemaining = detourLength.get();
                         avoidingHazard = true;
+                        returningToSavedDirection = false;
                     }
                 }
             } else {
@@ -161,6 +191,20 @@ public class TunnelBaseFinder extends Module {
         });
     }
 
+    private void updateYaw() {
+        float currentYaw = mc.player.getYaw();
+        float delta = targetYaw - currentYaw;
+
+        delta = ((delta + 180) % 360 + 360) % 360 - 180;
+        float step = rotationSpeed.get();
+
+        if (Math.abs(delta) <= step) {
+            mc.player.setYaw(targetYaw);
+        } else {
+            mc.player.setYaw(currentYaw + Math.signum(delta) * step);
+        }
+    }
+
     private FacingDirection getInitialDirection() {
         float yaw = mc.player.getYaw() % 360.0f;
         if (yaw < 0.0f) yaw += 360.0f;
@@ -169,6 +213,15 @@ public class TunnelBaseFinder extends Module {
         if (yaw >= 135.0f && yaw < 225.0f) return FacingDirection.NORTH;
         if (yaw >= 225.0f && yaw < 315.0f) return FacingDirection.EAST;
         return FacingDirection.SOUTH;
+    }
+
+    private float getYawForDirection(FacingDirection dir) {
+        return switch (dir) {
+            case NORTH -> 180f;
+            case SOUTH -> 0f;
+            case WEST -> 90f;
+            case EAST -> -90f;
+        };
     }
 
     private void mineForward() {
