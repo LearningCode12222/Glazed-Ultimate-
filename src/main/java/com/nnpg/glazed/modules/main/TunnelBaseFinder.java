@@ -1,6 +1,7 @@
 package com.nnpg.glazed.modules.main;
 
 import com.nnpg.glazed.GlazedAddon;
+import meteordevelopment.meteorclient.events.entity.TotemPopEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -13,6 +14,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.*;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
@@ -93,11 +95,12 @@ public class TunnelBaseFinder extends Module {
     private FacingDirection currentDirection;
     private FacingDirection savedDirection;
     private boolean avoidingHazard = false;
+    private boolean walkingIntoBlock = false;
     private boolean returningToSavedDirection = false;
     private int detourBlocksRemaining = 0;
 
     private float targetYaw;
-    private int rotationCooldownTicks = 0; // ticks to wait after turning before mining again
+    private int rotationCooldownTicks = 0;
 
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
     private final Random random = new Random();
@@ -114,6 +117,7 @@ public class TunnelBaseFinder extends Module {
         currentDirection = getInitialDirection();
         targetYaw = mc.player.getYaw();
         avoidingHazard = false;
+        walkingIntoBlock = false;
         returningToSavedDirection = false;
         detourBlocksRemaining = 0;
         rotationCooldownTicks = 0;
@@ -139,53 +143,43 @@ public class TunnelBaseFinder extends Module {
         if (rotationCooldownTicks > 0) {
             mc.options.forwardKey.setPressed(false);
             rotationCooldownTicks--;
-            return; // wait out the cooldown
+            return;
         }
 
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
-                mc.options.forwardKey.setPressed(true);
-
                 if (avoidingHazard) {
-                    if (detourBlocksRemaining > 0) {
-                        mineForward();
-                        detourBlocksRemaining--;
-                    } else if (!returningToSavedDirection) {
-                        // Finished detour → return
-                        targetYaw = getYawForDirection(savedDirection);
-                        currentDirection = savedDirection;
-                        returningToSavedDirection = true;
-                        rotationCooldownTicks = 30; // wait 1.5s before returning
-                        detourBlocksRemaining = detourLength.get();
-                    } else {
-                        if (detourBlocksRemaining > 0) {
-                            mineForward();
-                            detourBlocksRemaining--;
-                        } else {
-                            avoidingHazard = false;
-                            returningToSavedDirection = false;
-                        }
-                    }
-                } else {
-                    if (!detectHazards()) {
-                        mineForward();
-                    } else {
+                    mc.options.forwardKey.setPressed(true);
+
+                    if (isBlockInFront()) {
+                        mc.options.forwardKey.setPressed(false);
+                        avoidingHazard = false;
+                        walkingIntoBlock = false;
+
                         savedDirection = currentDirection;
                         if (random.nextBoolean()) {
                             currentDirection = turnLeft(savedDirection);
                             targetYaw = mc.player.getYaw() - 90f;
-                            info("Hazard detected! Smooth turning LEFT");
+                            info("Hazard: Turning LEFT after bump");
                         } else {
                             currentDirection = turnRight(savedDirection);
                             targetYaw = mc.player.getYaw() + 90f;
-                            info("Hazard detected! Smooth turning RIGHT");
+                            info("Hazard: Turning RIGHT after bump");
                         }
-                        rotationCooldownTicks = 30; // wait 1.5s before mining again
+
+                        rotationCooldownTicks = 30;
                         detourBlocksRemaining = detourLength.get();
-                        avoidingHazard = true;
                         returningToSavedDirection = false;
-                        mc.options.forwardKey.setPressed(false);
+                    }
+                } else {
+                    mc.options.forwardKey.setPressed(true);
+                    if (!detectHazards()) {
+                        mineForward();
+                    } else {
+                        avoidingHazard = true;
+                        walkingIntoBlock = true;
+                        info("Hazard detected! Walking until bump...");
                     }
                 }
             } else {
@@ -196,11 +190,32 @@ public class TunnelBaseFinder extends Module {
         notifyFound();
     }
 
+    private boolean isBlockInFront() {
+        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos target = switch (currentDirection) {
+            case NORTH -> playerPos.north();
+            case SOUTH -> playerPos.south();
+            case EAST -> playerPos.east();
+            case WEST -> playerPos.west();
+        };
+        BlockState state = mc.world.getBlockState(target);
+        return !state.isAir() && state.getBlock() != Blocks.BEDROCK;
+    }
+
     @EventHandler
     private void onRender(Render3DEvent event) {
         detectedBlocks.forEach((pos, color) -> {
             event.renderer.box(pos, color, color, ShapeMode.Both, 0);
         });
+    }
+
+    // NEW: Totem Pop handling
+    @EventHandler
+    private void onTotemPop(TotemPopEvent event) {
+        if (mc.player != null && event.entity instanceof PlayerEntity player && player.equals(mc.player)) {
+            disconnectWithMessage(Text.of("Totem Popped"));
+            toggle();
+        }
     }
 
     private void updateYaw() {
@@ -262,7 +277,7 @@ public class TunnelBaseFinder extends Module {
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
             BlockState state = mc.world.getBlockState(pos);
             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
-                warning("Hazard detected: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
+                warning("Hazard: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
                 return true;
             }
         }
