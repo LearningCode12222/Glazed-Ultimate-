@@ -6,7 +6,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor; // ✅ FIXED IMPORT
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -20,8 +20,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.chunk.ChunkStatus;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class TunnelBaseFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -53,62 +52,31 @@ public class TunnelBaseFinder extends Module {
         .build()
     );
 
-    private final Setting<Boolean> detectChests = sgDetect.add(new BoolSetting.Builder()
-        .name("detect-chests")
-        .defaultValue(true)
-        .build()
-    );
+    private final Setting<Boolean> detectChests = sgDetect.add(new BoolSetting.Builder().name("detect-chests").defaultValue(true).build());
+    private final Setting<Boolean> detectShulkers = sgDetect.add(new BoolSetting.Builder().name("detect-shulkers").defaultValue(true).build());
+    private final Setting<Boolean> detectBarrels = sgDetect.add(new BoolSetting.Builder().name("detect-barrels").defaultValue(true).build());
+    private final Setting<Boolean> detectSpawners = sgDetect.add(new BoolSetting.Builder().name("detect-spawners").defaultValue(true).build());
+    private final Setting<Boolean> detectFurnaces = sgDetect.add(new BoolSetting.Builder().name("detect-furnaces").defaultValue(false).build());
+    private final Setting<Boolean> detectRedstone = sgDetect.add(new BoolSetting.Builder().name("detect-redstone").defaultValue(false).build());
 
-    private final Setting<Boolean> detectShulkers = sgDetect.add(new BoolSetting.Builder()
-        .name("detect-shulkers")
-        .defaultValue(true)
-        .build()
-    );
+    // ESP colors
+    private final Setting<SettingColor> chestColor = sgRender.add(new ColorSetting.Builder().name("chest-color").defaultValue(new SettingColor(255, 165, 0, 80)).build());
+    private final Setting<SettingColor> shulkerColor = sgRender.add(new ColorSetting.Builder().name("shulker-color").defaultValue(new SettingColor(255, 0, 255, 80)).build());
+    private final Setting<SettingColor> barrelColor = sgRender.add(new ColorSetting.Builder().name("barrel-color").defaultValue(new SettingColor(139, 69, 19, 80)).build());
+    private final Setting<SettingColor> spawnerColor = sgRender.add(new ColorSetting.Builder().name("spawner-color").defaultValue(new SettingColor(0, 0, 255, 80)).build());
+    private final Setting<SettingColor> furnaceColor = sgRender.add(new ColorSetting.Builder().name("furnace-color").defaultValue(new SettingColor(128, 128, 128, 80)).build());
+    private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder().name("redstone-color").defaultValue(new SettingColor(255, 0, 0, 80)).build());
 
-    private final Setting<Boolean> detectBarrels = sgDetect.add(new BoolSetting.Builder()
-        .name("detect-barrels")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> detectSpawners = sgDetect.add(new BoolSetting.Builder()
-        .name("detect-spawners")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> detectFurnaces = sgDetect.add(new BoolSetting.Builder()
-        .name("detect-furnaces")
-        .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Boolean> detectRedstone = sgDetect.add(new BoolSetting.Builder()
-        .name("detect-redstone")
-        .defaultValue(false)
-        .build()
-    );
-
-    // ESP settings
-    private final Setting<SettingColor> espColor = sgRender.add(new ColorSetting.Builder() // ✅ FIXED TYPE
-        .name("esp-color")
-        .description("Color of ESP boxes.")
-        .defaultValue(new SettingColor(0, 255, 0, 80)) // ✅ FIXED DEFAULT VALUE
-        .build()
-    );
-
-    private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder()
-        .name("esp-outline")
-        .defaultValue(true)
-        .build()
-    );
+    private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder().name("esp-outline").defaultValue(true).build());
 
     // State
     private Direction currentDirection;
     private boolean avoidingHazard = false;
     private Direction savedDirection;
     private int detourBlocksRemaining = 0;
-    private final List<BlockPos> detectedBlocks = new ArrayList<>();
+
+    private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
+    private final Random random = new Random();
 
     private final int minY = -64;
     private final int maxY = 0;
@@ -140,7 +108,6 @@ public class TunnelBaseFinder extends Module {
 
         mc.player.setPitch(2.0f);
 
-        // Auto walk + mine
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
@@ -160,10 +127,18 @@ public class TunnelBaseFinder extends Module {
                         mineForward();
                     } else {
                         savedDirection = currentDirection;
-                        currentDirection = turnLeft(savedDirection);
+
+                        // Random left or right turn
+                        if (random.nextBoolean()) {
+                            currentDirection = turnLeft(savedDirection);
+                            info("Hazard detected! Turning LEFT 90°");
+                        } else {
+                            currentDirection = turnRight(savedDirection);
+                            info("Hazard detected! Turning RIGHT 90°");
+                        }
+
                         detourBlocksRemaining = 10;
                         avoidingHazard = true;
-                        info("Detouring around hazard for 10 blocks...");
                     }
                 }
             } else {
@@ -171,16 +146,14 @@ public class TunnelBaseFinder extends Module {
             }
         }
 
-        // Scan blocks
         notifyFound();
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        for (BlockPos pos : detectedBlocks) {
-            event.renderer.box(pos, espColor.get(), espColor.get(),
-                ShapeMode.Both, 0);
-        }
+        detectedBlocks.forEach((pos, color) -> {
+            event.renderer.box(pos, color, color, ShapeMode.Both, 0);
+        });
     }
 
     private Direction getInitialDirection() {
@@ -227,7 +200,6 @@ public class TunnelBaseFinder extends Module {
 
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
             BlockState state = mc.world.getBlockState(pos);
-
             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
                 warning("Hazard detected: " + state.getBlock().getName().getString() + " at " + pos.toShortString());
                 return true;
@@ -258,37 +230,23 @@ public class TunnelBaseFinder extends Module {
                     ChunkStatus.FULL,
                     false
                 );
-
                 if (chunk == null) continue;
 
                 for (BlockPos pos : chunk.getBlockEntityPositions()) {
                     BlockEntity be = mc.world.getBlockEntity(pos);
                     if (be == null) continue;
 
-                    if (detectSpawners.get() && be instanceof MobSpawnerBlockEntity) {
+                    SettingColor color = null;
+                    if (detectSpawners.get() && be instanceof MobSpawnerBlockEntity) color = spawnerColor.get();
+                    if (detectChests.get() && be instanceof ChestBlockEntity) color = chestColor.get();
+                    if (detectBarrels.get() && be instanceof BarrelBlockEntity) color = barrelColor.get();
+                    if (detectFurnaces.get() && be instanceof FurnaceBlockEntity) color = furnaceColor.get();
+                    if (detectShulkers.get() && be instanceof ShulkerBoxBlockEntity) color = shulkerColor.get();
+                    if (detectRedstone.get() && be instanceof PistonBlockEntity) color = redstoneColor.get();
+
+                    if (color != null) {
                         storage++;
-                        detectedBlocks.add(pos);
-                    }
-                    if (detectChests.get() && be instanceof ChestBlockEntity) {
-                        storage++;
-                        detectedBlocks.add(pos);
-                    }
-                    if (detectBarrels.get() && be instanceof BarrelBlockEntity) {
-                        storage++;
-                        detectedBlocks.add(pos);
-                    }
-                    if (detectFurnaces.get() && be instanceof FurnaceBlockEntity) {
-                        storage++;
-                        detectedBlocks.add(pos);
-                    }
-                    if (detectShulkers.get() && be instanceof ShulkerBoxBlockEntity) {
-                        storage++;
-                        detectedBlocks.add(pos);
-                    }
-                    // Example redstone detection: piston block entities
-                    if (detectRedstone.get() && be instanceof PistonBlockEntity) {
-                        storage++;
-                        detectedBlocks.add(pos);
+                        detectedBlocks.put(pos, color);
                     }
                 }
             }
