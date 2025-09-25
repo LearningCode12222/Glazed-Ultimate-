@@ -77,7 +77,7 @@ public class GlazedAddon extends MeteorAddon {
         Modules.get().add(new EmergencySeller());
         Modules.get().add(new RTPEndBaseFinder());
         Modules.get().add(new ShopBuyer());
-        Modules.get().add(new UndetectedTunneler());
+        Modules.get().add(new PathfinderUtil());
         Modules.get().add(new OrderDropper());
         Modules.get().add(new DoubleAnchor());
         Modules.get().add(new ElytraAutoFly());
