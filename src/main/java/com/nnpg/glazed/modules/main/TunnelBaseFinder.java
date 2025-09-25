@@ -18,6 +18,8 @@ import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -88,7 +90,6 @@ public class TunnelBaseFinder extends Module {
     private final Setting<SettingColor> spawnerColor = sgRender.add(new ColorSetting.Builder().name("spawner-color").defaultValue(new SettingColor(0, 0, 255, 80)).build());
     private final Setting<SettingColor> furnaceColor = sgRender.add(new ColorSetting.Builder().name("furnace-color").defaultValue(new SettingColor(128, 128, 128, 80)).build());
     private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder().name("redstone-color").defaultValue(new SettingColor(255, 0, 0, 80)).build());
-
     private final Setting<Boolean> espOutline = sgRender.add(new BoolSetting.Builder().name("esp-outline").defaultValue(true).build());
 
     // State
@@ -98,13 +99,10 @@ public class TunnelBaseFinder extends Module {
     private boolean walkingIntoBlock = false;
     private boolean returningToSavedDirection = false;
     private int detourBlocksRemaining = 0;
-
     private float targetYaw;
     private int rotationCooldownTicks = 0;
-
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
     private final Random random = new Random();
-
     private final int minY = -64;
     private final int maxY = 0;
 
@@ -151,12 +149,10 @@ public class TunnelBaseFinder extends Module {
             if (y <= maxY && y >= minY) {
                 if (avoidingHazard) {
                     mc.options.forwardKey.setPressed(true);
-
                     if (isBlockInFront()) {
                         mc.options.forwardKey.setPressed(false);
                         avoidingHazard = false;
                         walkingIntoBlock = false;
-
                         savedDirection = currentDirection;
                         if (random.nextBoolean()) {
                             currentDirection = turnLeft(savedDirection);
@@ -167,7 +163,6 @@ public class TunnelBaseFinder extends Module {
                             targetYaw = mc.player.getYaw() + 90f;
                             info("Hazard: Turning RIGHT after bump");
                         }
-
                         rotationCooldownTicks = 30;
                         detourBlocksRemaining = detourLength.get();
                         returningToSavedDirection = false;
@@ -223,10 +218,8 @@ public class TunnelBaseFinder extends Module {
     private void updateYaw() {
         float currentYaw = mc.player.getYaw();
         float delta = targetYaw - currentYaw;
-
         delta = ((delta + 180) % 360 + 360) % 360 - 180;
         float step = rotationSpeed.get();
-
         if (Math.abs(delta) <= step) {
             mc.player.setYaw(targetYaw);
         } else {
@@ -237,7 +230,6 @@ public class TunnelBaseFinder extends Module {
     private FacingDirection getInitialDirection() {
         float yaw = mc.player.getYaw() % 360.0f;
         if (yaw < 0.0f) yaw += 360.0f;
-
         if (yaw >= 45.0f && yaw < 135.0f) return FacingDirection.WEST;
         if (yaw >= 135.0f && yaw < 225.0f) return FacingDirection.NORTH;
         if (yaw >= 225.0f && yaw < 315.0f) return FacingDirection.EAST;
@@ -253,24 +245,20 @@ public class TunnelBaseFinder extends Module {
         };
     }
 
-    // ✅ Fixed mining (works on servers, normal speed)
+    // ✅ Fixed mining (now mines the block you're looking at, works on servers)
     private void mineForward() {
         if (mc.player == null || mc.interactionManager == null || mc.world == null) return;
 
-        BlockPos playerPos = mc.player.getBlockPos();
-        BlockPos target = switch (currentDirection) {
-            case NORTH -> playerPos.north();
-            case SOUTH -> playerPos.south();
-            case EAST -> playerPos.east();
-            case WEST -> playerPos.west();
-        };
+        HitResult hit = mc.player.raycast(5.0, 0.0f, false);
+        if (hit == null || hit.getType() != HitResult.Type.BLOCK) return;
 
+        BlockHitResult bhr = (BlockHitResult) hit;
+        BlockPos target = bhr.getBlockPos();
         BlockState state = mc.world.getBlockState(target);
+
         if (state.isAir() || state.getBlock() == Blocks.BEDROCK) return;
 
-        // Tell server we are mining this block
-        boolean mining = mc.interactionManager.updateBlockBreakingProgress(target, currentDirection.toMcDirection());
-
+        boolean mining = mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide());
         if (mining) {
             mc.player.swingHand(Hand.MAIN_HAND);
         }
@@ -278,7 +266,6 @@ public class TunnelBaseFinder extends Module {
 
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
-
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, 10, 10, 10)) {
             BlockState state = mc.world.getBlockState(pos);
             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER) {
@@ -299,7 +286,6 @@ public class TunnelBaseFinder extends Module {
     private void notifyFound() {
         int storage = 0;
         detectedBlocks.clear();
-
         int viewDist = mc.options.getViewDistance().getValue();
         BlockPos playerPos = mc.player.getBlockPos();
 
@@ -343,7 +329,6 @@ public class TunnelBaseFinder extends Module {
         if (discordNotification.get()) {
             info("[Discord notify] " + msg + " at " + x + " " + y + " " + z);
         }
-
         disconnectWithMessage(Text.of(msg));
         toggle();
     }
