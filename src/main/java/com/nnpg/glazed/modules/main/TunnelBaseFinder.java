@@ -82,10 +82,10 @@ public class TunnelBaseFinder extends Module {
     private final Setting<Boolean> detectFurnaces = sgDetect.add(new BoolSetting.Builder().name("detect-furnaces").defaultValue(false).build());
     private final Setting<Boolean> detectRedstone = sgDetect.add(new BoolSetting.Builder().name("detect-redstone").defaultValue(false).build());
 
-    // ✅ Rotated Deepslate Detection
+    // Rotated deepslate setting
     private final Setting<Boolean> detectRotatedDeepslate = sgDetect.add(new BoolSetting.Builder()
         .name("detect-rotated-deepslate")
-        .description("Detect rotated deepslate pillars, stairs, and slabs.")
+        .description("Detect rotated deepslate pillars, stairs and slabs (ESP + mine to them).")
         .defaultValue(true)
         .build()
     );
@@ -110,8 +110,16 @@ public class TunnelBaseFinder extends Module {
     private float targetYaw;
     private int rotationCooldownTicks = 0;
     private final Map<BlockPos, SettingColor> detectedBlocks = new HashMap<>();
+    private final Set<BlockPos> rotatedDeepslatePositions = new HashSet<>();
     private final int minY = -64;
     private final int maxY = 0;
+
+    // scanning control
+    private int scanCooldown = 0;
+    private final int SCAN_INTERVAL_TICKS = 30; // scan every 30 ticks (1.5s)
+
+    // current target (nearest rotated deepslate)
+    private BlockPos currentDeepslateTarget = null;
 
     public TunnelBaseFinder() {
         super(GlazedAddon.CATEGORY, "TunnelBaseFinder", "Finds tunnel bases with ESP, rotated deepslate, and smart hazard detection.");
@@ -125,6 +133,9 @@ public class TunnelBaseFinder extends Module {
         detourBlocksRemaining = 0;
         rotationCooldownTicks = 0;
         detectedBlocks.clear();
+        rotatedDeepslatePositions.clear();
+        scanCooldown = 0;
+        currentDeepslateTarget = null;
     }
 
     @Override
@@ -134,15 +145,36 @@ public class TunnelBaseFinder extends Module {
         options.rightKey.setPressed(false);
         options.forwardKey.setPressed(false);
         detectedBlocks.clear();
+        rotatedDeepslatePositions.clear();
+        currentDeepslateTarget = null;
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null || currentDirection == null) return;
 
+        // update rotation smoothly
         mc.player.setPitch(2.0f);
         updateYaw();
 
+        // do periodic scan for rotated deepslate (not every tick)
+        if (detectRotatedDeepslate.get()) {
+            if (scanCooldown <= 0) {
+                scanRotatedDeepslateInRenderDistance();
+                scanCooldown = SCAN_INTERVAL_TICKS;
+            } else scanCooldown--;
+        } else {
+            rotatedDeepslatePositions.clear();
+            currentDeepslateTarget = null;
+        }
+
+        // if we have a deepslate target, prioritize rotating/moving to it (but still respect hazards)
+        if (currentDeepslateTarget == null && !rotatedDeepslatePositions.isEmpty()) {
+            // pick nearest
+            currentDeepslateTarget = findNearest(rotatedDeepslatePositions);
+        }
+
+        // rotation cooldown handles smooth turning — while rotating, pause forward/mining actions
         if (rotationCooldownTicks > 0) {
             mc.options.forwardKey.setPressed(false);
             rotationCooldownTicks--;
@@ -153,6 +185,24 @@ public class TunnelBaseFinder extends Module {
             return;
         }
 
+        // If we have a deepslate target within reasonable distance, rotate to its placement orientation and mine it.
+        if (detectRotatedDeepslate.get() && currentDeepslateTarget != null) {
+            // if target gone (air), clear and continue
+            BlockState bs = safeGetBlockState(currentDeepslateTarget);
+            if (bs == null || bs.isAir()) {
+                rotatedDeepslatePositions.remove(currentDeepslateTarget);
+                currentDeepslateTarget = null;
+            } else {
+                // rotate to face the block according to its placement orientation
+                rotateTowardBlockPlacement(currentDeepslateTarget, bs);
+                // set a small rotation cooldown so updateYaw has time to approach targetYaw
+                rotationCooldownTicks = Math.max(2, 20 / Math.max(1, rotationSpeed.get()));
+                // after rotation completes, we'll mine it inside the next tick when rotationCooldownTicks reaches 0
+                return;
+            }
+        }
+
+        // NORMAL tunnel logic & hazard handling follows (mostly preserved)
         if (autoWalkMine.get()) {
             int y = mc.player.getBlockY();
             if (y <= maxY && y >= minY) {
@@ -162,6 +212,7 @@ public class TunnelBaseFinder extends Module {
                         mc.options.forwardKey.setPressed(false);
                         avoidingHazard = false;
                         savedDirection = currentDirection;
+                        // choose safe side
                         FacingDirection left = turnLeft(savedDirection);
                         FacingDirection right = turnRight(savedDirection);
                         if (isSafeDirection(left)) {
@@ -195,49 +246,142 @@ public class TunnelBaseFinder extends Module {
         notifyFound();
     }
 
-    private boolean isBlockInFront() {
+    // Scans all loaded chunks within render distance for rotated deepslate blocks and populates rotatedDeepslatePositions.
+    private void scanRotatedDeepslateInRenderDistance() {
+        rotatedDeepslatePositions.clear();
+        int viewDistChunks = mc.options.getViewDistance().getValue();
         BlockPos playerPos = mc.player.getBlockPos();
-        BlockPos target = playerPos.offset(currentDirection.toMcDirection());
-        BlockState state = mc.world.getBlockState(target);
-        return !state.isAir() && state.getBlock() != Blocks.BEDROCK;
-    }
 
-    @EventHandler
-    private void onRender(Render3DEvent event) {
-        detectedBlocks.forEach((pos, color) -> {
-            event.renderer.box(pos, color, color, ShapeMode.Both, 0);
-        });
-    }
+        // iterate chunks within view distance
+        for (int dx = -viewDistChunks; dx <= viewDistChunks; dx++) {
+            for (int dz = -viewDistChunks; dz <= viewDistChunks; dz++) {
+                WorldChunk chunk = mc.world.getChunkManager().getChunk(
+                    (playerPos.getX() >> 4) + dx,
+                    (playerPos.getZ() >> 4) + dz,
+                    ChunkStatus.FULL,
+                    false
+                );
+                if (chunk == null) continue;
 
-    @EventHandler
-    private void onPacketReceive(PacketEvent.Receive event) {
-        if (event.packet instanceof EntityStatusS2CPacket packet) {
-            if (packet.getStatus() == 35 && packet.getEntity(mc.world) == mc.player) {
-                disconnectWithMessage(Text.of("Totem Popped"));
-                toggle();
+                // scan vertical slice near player Y (limit vertical scan to +/- 16 blocks to reduce load)
+                int minYScan = Math.max(mc.world.getBottomY(), playerPos.getY() - 16);
+                int maxYScan = Math.min(mc.world.getTopY(), playerPos.getY() + 16);
+
+                for (int x = chunk.getPos().getStartX(); x <= chunk.getPos().getEndX(); x++) {
+                    for (int z = chunk.getPos().getStartZ(); z <= chunk.getPos().getEndZ(); z++) {
+                        for (int y = minYScan; y <= maxYScan; y++) {
+                            BlockPos pos = new BlockPos(x, y, z);
+                            BlockState state = safeGetBlockState(pos);
+                            if (state == null) continue;
+                            if (isRotatedDeepslate(state)) {
+                                rotatedDeepslatePositions.add(pos);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    private void updateYaw() {
-        float currentYaw = mc.player.getYaw();
-        float delta = targetYaw - currentYaw;
-        delta = ((delta + 180) % 360 + 360) % 360 - 180;
-        float step = rotationSpeed.get();
-        if (Math.abs(delta) <= step) mc.player.setYaw(targetYaw);
-        else mc.player.setYaw(currentYaw + Math.signum(delta) * step);
+    // Find nearest BlockPos from player among a set
+    private BlockPos findNearest(Collection<BlockPos> positions) {
+        BlockPos player = mc.player.getBlockPos();
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (BlockPos p : positions) {
+            double d = mc.player.getPos().squaredDistanceTo(p.toCenterPos());
+            if (d < bestDist) {
+                bestDist = d;
+                best = p;
+            }
+        }
+        return best;
     }
 
-    private FacingDirection getInitialDirection() {
-        float yaw = mc.player.getYaw() % 360.0f;
-        if (yaw < 0.0f) yaw += 360.0f;
-        if (yaw >= 45.0f && yaw < 135.0f) return FacingDirection.WEST;
-        if (yaw >= 135.0f && yaw < 225.0f) return FacingDirection.NORTH;
-        if (yaw >= 225.0f && yaw < 315.0f) return FacingDirection.EAST;
-        return FacingDirection.SOUTH;
+    // Rotate the player so the yaw lines up with the block's placement orientation
+    private void rotateTowardBlockPlacement(BlockPos pos, BlockState state) {
+        // If block uses AXIS (pillars), face along its axis (east/west for X, north/south for Z).
+        if (state.contains(Properties.AXIS)) {
+            Direction.Axis axis = state.get(Properties.AXIS);
+            // Choose which cardinal direction to face based on player relative position to block
+            double px = mc.player.getX();
+            double pz = mc.player.getZ();
+            double bx = pos.getX() + 0.5;
+            double bz = pos.getZ() + 0.5;
+
+            if (axis == Direction.Axis.X) {
+                // face EAST or WEST (choose closer)
+                if (Math.abs(px - bx) <= Math.abs(pz - bz)) {
+                    // prefer EAST/WEST based on player x
+                    targetYaw = (px < bx) ? -90f : 90f; // -90 east, 90 west
+                } else {
+                    // fallback to east
+                    targetYaw = -90f;
+                }
+            } else if (axis == Direction.Axis.Z) {
+                // face NORTH or SOUTH
+                if (Math.abs(pz - bz) <= Math.abs(px - bx)) {
+                    targetYaw = (pz < bz) ? 0f : 180f; // 0 south, 180 north
+                } else {
+                    targetYaw = 0f;
+                }
+            } else { // axis == Y -> not rotated pillar
+                // face directly toward block center
+                rotateTowardPos(pos);
+                return;
+            }
+            info("Rotating to pillar axis " + axis.asString() + " for deepslate at " + pos.toShortString());
+            return;
+        }
+
+        // If block contains horizontal facing (stairs, slabs), use that facing
+        if (state.contains(Properties.HORIZONTAL_FACING)) {
+            Direction facing = state.get(Properties.HORIZONTAL_FACING);
+            targetYaw = yawForFacing(facing);
+            info("Rotating to block facing " + facing.asString() + " at " + pos.toShortString());
+            return;
+        }
+
+        // If block contains a direct FACING (3D), use that too
+        if (state.contains(Properties.FACING)) {
+            Direction facing = state.get(Properties.FACING);
+            targetYaw = yawForFacing(facing);
+            info("Rotating to block facing " + facing.asString() + " at " + pos.toShortString());
+            return;
+        }
+
+        // otherwise, rotate to face block center
+        rotateTowardPos(pos);
     }
 
-    // ✅ Mining forward with block state respect
+    private void rotateTowardPos(BlockPos pos) {
+        Vec3d p = mc.player.getPos();
+        double dx = (pos.getX() + 0.5) - p.x;
+        double dz = (pos.getZ() + 0.5) - p.z;
+        double yaw = Math.toDegrees(Math.atan2(-dx, dz));
+        targetYaw = (float) yaw;
+    }
+
+    private float yawForFacing(Direction facing) {
+        return switch (facing) {
+            case NORTH -> 180f;
+            case SOUTH -> 0f;
+            case WEST -> 90f;
+            case EAST -> -90f;
+            default -> 0f;
+        };
+    }
+
+    private BlockState safeGetBlockState(BlockPos pos) {
+        try {
+            return mc.world.getBlockState(pos);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // If player is looking at a block, attempt to mine; when we are targeting rotated deepslate,
+    // this will be called shortly after rotation target was set and rotationCooldown expires.
     private void mineForward() {
         if (mc.player == null || mc.interactionManager == null || mc.world == null) return;
         HitResult hit = mc.player.raycast(5.0, 0.0f, false);
@@ -246,26 +390,29 @@ public class TunnelBaseFinder extends Module {
         BlockState state = mc.world.getBlockState(target);
         if (state.isAir() || state.getBlock() == Blocks.BEDROCK) return;
 
-        // ✅ Special rotated deepslate handling
+        // If this is rotated deepslate, attempt to mine while oriented as above.
         if (detectRotatedDeepslate.get() && isRotatedDeepslate(state)) {
-            info("Rotated Deepslate found, mining block: " + state.getBlock().getName().getString());
+            // We assume rotateTowardBlockPlacement was called, so player will be turned to the correct yaw.
+            // Use the hit side if available, otherwise default to UP.
+            mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide());
+            mc.player.swingHand(Hand.MAIN_HAND);
+            // after mining attempt, clear the target so we can rescan/pick next
+            rotatedDeepslatePositions.remove(target);
+            if (currentDeepslateTarget != null && currentDeepslateTarget.equals(target)) currentDeepslateTarget = null;
+            return;
         }
 
+        // default mining behavior
         if (mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide())) {
             mc.player.swingHand(Hand.MAIN_HAND);
         }
     }
 
-    // ✅ Check for rotated deepslate variants
-    private boolean isRotatedDeepslate(BlockState state) {
-        Block b = state.getBlock();
-        return (b instanceof PillarBlock || b instanceof StairsBlock || b instanceof SlabBlock) && b.getTranslationKey().contains("deepslate");
-    }
-
-    // ✅ Hazard detection
+    // improved hazard detection (lava/water/gravel/sand/powder_snow)
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
 
+        // check 3 blocks above
         for (int i = 1; i <= 3; i++) {
             BlockState state = mc.world.getBlockState(playerPos.up(i));
             if (isHazard(state)) {
@@ -274,6 +421,7 @@ public class TunnelBaseFinder extends Module {
             }
         }
 
+        // check 3 blocks forward
         for (int i = 1; i <= 3; i++) {
             BlockPos front = playerPos.offset(currentDirection.toMcDirection(), i);
             BlockState state = mc.world.getBlockState(front);
@@ -287,18 +435,9 @@ public class TunnelBaseFinder extends Module {
     }
 
     private boolean isHazard(BlockState state) {
+        if (state == null) return false;
         Block b = state.getBlock();
         return b == Blocks.LAVA || b == Blocks.WATER || b == Blocks.GRAVEL || b == Blocks.SAND || b == Blocks.POWDER_SNOW;
-    }
-
-    private boolean isSafeDirection(FacingDirection dir) {
-        BlockPos playerPos = mc.player.getBlockPos();
-        for (int i = 1; i <= 3; i++) {
-            BlockPos side = playerPos.offset(dir.toMcDirection(), i);
-            BlockState state = mc.world.getBlockState(side);
-            if (isHazard(state)) return false;
-        }
-        return true;
     }
 
     private void notifyFound() {
@@ -340,14 +479,10 @@ public class TunnelBaseFinder extends Module {
                     }
                 }
 
-                // ✅ Scan for rotated deepslate
+                // add rotated deepslate positions to ESP map
                 if (detectRotatedDeepslate.get()) {
-                    for (BlockPos pos : BlockPos.iterate(chunk.getPos().getStartX(), mc.player.getBlockY() - 10, chunk.getPos().getStartZ(),
-                                                         chunk.getPos().getEndX(), mc.player.getBlockY() + 10, chunk.getPos().getEndZ())) {
-                        BlockState state = mc.world.getBlockState(pos);
-                        if (isRotatedDeepslate(state)) {
-                            detectedBlocks.put(pos, rotatedDeepslateColor.get());
-                        }
+                    for (BlockPos p : rotatedDeepslatePositions) {
+                        detectedBlocks.put(p, rotatedDeepslateColor.get());
                     }
                 }
             }
@@ -357,6 +492,67 @@ public class TunnelBaseFinder extends Module {
             Vec3d p = mc.player.getPos();
             notifyFound("Base found", (int) p.x, (int) p.y, (int) p.z);
         }
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        // Draw ESP boxes for detected block entities + rotated deepslate positions
+        detectedBlocks.forEach((pos, color) -> event.renderer.box(pos, color, color, ShapeMode.Both, 0));
+    }
+
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (event.packet instanceof EntityStatusS2CPacket packet) {
+            if (packet.getStatus() == 35 && packet.getEntity(mc.world) == mc.player) {
+                disconnectWithMessage(Text.of("Totem Popped"));
+                toggle();
+            }
+        }
+    }
+
+    private void updateYaw() {
+        float currentYaw = mc.player.getYaw();
+        float delta = targetYaw - currentYaw;
+        delta = ((delta + 180) % 360 + 360) % 360 - 180;
+        float step = rotationSpeed.get();
+        if (Math.abs(delta) <= step) mc.player.setYaw(targetYaw);
+        else mc.player.setYaw(currentYaw + Math.signum(delta) * step);
+    }
+
+    private FacingDirection getInitialDirection() {
+        float yaw = mc.player.getYaw() % 360.0f;
+        if (yaw < 0.0f) yaw += 360.0f;
+        if (yaw >= 45.0f && yaw < 135.0f) return FacingDirection.WEST;
+        if (yaw >= 135.0f && yaw < 225.0f) return FacingDirection.NORTH;
+        if (yaw >= 225.0f && yaw < 315.0f) return FacingDirection.EAST;
+        return FacingDirection.SOUTH;
+    }
+
+    private boolean isBlockInFront() {
+        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos target = playerPos.offset(currentDirection.toMcDirection());
+        BlockState state = mc.world.getBlockState(target);
+        return !state.isAir() && state.getBlock() != Blocks.BEDROCK;
+    }
+
+    private boolean isRotatedDeepslate(BlockState state) {
+        if (state == null) return false;
+        Block b = state.getBlock();
+        // Basic filter: block's translation key contains "deepslate" AND it has an orientation property we can use
+        String key = b.getTranslationKey().toLowerCase(Locale.ROOT);
+        if (!key.contains("deepslate")) return false;
+
+        // Many deepslate variants use Pillar/Stairs/Slab blocks or have AXIS/HORIZONTAL_FACING/FACING properties
+        if (state.contains(Properties.AXIS)) {
+            Direction.Axis axis = state.get(Properties.AXIS);
+            return axis != Direction.Axis.Y; // Y axis usually not a rotated pillar
+        }
+
+        if (state.contains(Properties.HORIZONTAL_FACING)) return true;
+        if (state.contains(Properties.FACING)) return true;
+
+        // As fallback, check block classes
+        return (b instanceof PillarBlock) || (b instanceof StairsBlock) || (b instanceof SlabBlock);
     }
 
     private void notifyFound(String msg, int x, int y, int z) {
