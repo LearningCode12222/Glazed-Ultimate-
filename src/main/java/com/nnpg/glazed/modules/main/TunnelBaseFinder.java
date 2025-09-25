@@ -13,6 +13,7 @@ import net.minecraft.block.*;
 import net.minecraft.block.entity.*;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
+import net.minecraft.state.property.Properties;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
@@ -81,10 +82,10 @@ public class TunnelBaseFinder extends Module {
     private final Setting<Boolean> detectFurnaces = sgDetect.add(new BoolSetting.Builder().name("detect-furnaces").defaultValue(false).build());
     private final Setting<Boolean> detectRedstone = sgDetect.add(new BoolSetting.Builder().name("detect-redstone").defaultValue(false).build());
 
-    // ✅ New: Rotated Deepslate Detection
+    // ✅ Rotated Deepslate Detection
     private final Setting<Boolean> detectRotatedDeepslate = sgDetect.add(new BoolSetting.Builder()
         .name("detect-rotated-deepslate")
-        .description("Detect rotated deepslate blocks and mine toward them.")
+        .description("Detect rotated deepslate pillars, stairs, and slabs.")
         .defaultValue(true)
         .build()
     );
@@ -246,9 +247,8 @@ public class TunnelBaseFinder extends Module {
         if (state.isAir() || state.getBlock() == Blocks.BEDROCK) return;
 
         // ✅ Special rotated deepslate handling
-        if (detectRotatedDeepslate.get() && state.getBlock() == Blocks.DEEPSLATE && state.contains(Properties.AXIS)) {
-            Direction.Axis axis = state.get(Properties.AXIS);
-            info("Rotated Deepslate found, mining along axis: " + axis.asString());
+        if (detectRotatedDeepslate.get() && isRotatedDeepslate(state)) {
+            info("Rotated Deepslate found, mining block: " + state.getBlock().getName().getString());
         }
 
         if (mc.interactionManager.updateBlockBreakingProgress(target, bhr.getSide())) {
@@ -256,11 +256,16 @@ public class TunnelBaseFinder extends Module {
         }
     }
 
-    // ✅ Hazard detection (more reliable: lava, water, gravel, sand, powdered snow)
+    // ✅ Check for rotated deepslate variants
+    private boolean isRotatedDeepslate(BlockState state) {
+        Block b = state.getBlock();
+        return (b instanceof PillarBlock || b instanceof StairsBlock || b instanceof SlabBlock) && b.getTranslationKey().contains("deepslate");
+    }
+
+    // ✅ Hazard detection
     private boolean detectHazards() {
         BlockPos playerPos = mc.player.getBlockPos();
 
-        // check 3 blocks above
         for (int i = 1; i <= 3; i++) {
             BlockState state = mc.world.getBlockState(playerPos.up(i));
             if (isHazard(state)) {
@@ -269,7 +274,6 @@ public class TunnelBaseFinder extends Module {
             }
         }
 
-        // check 3 blocks forward
         for (int i = 1; i <= 3; i++) {
             BlockPos front = playerPos.offset(currentDirection.toMcDirection(), i);
             BlockState state = mc.world.getBlockState(front);
@@ -341,9 +345,8 @@ public class TunnelBaseFinder extends Module {
                     for (BlockPos pos : BlockPos.iterate(chunk.getPos().getStartX(), mc.player.getBlockY() - 10, chunk.getPos().getStartZ(),
                                                          chunk.getPos().getEndX(), mc.player.getBlockY() + 10, chunk.getPos().getEndZ())) {
                         BlockState state = mc.world.getBlockState(pos);
-                        if (state.getBlock() == Blocks.DEEPSLATE && state.contains(Properties.AXIS)) {
+                        if (isRotatedDeepslate(state)) {
                             detectedBlocks.put(pos, rotatedDeepslateColor.get());
-                            info("Rotated deepslate detected at " + pos.toShortString());
                         }
                     }
                 }
